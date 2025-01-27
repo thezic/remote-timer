@@ -1,0 +1,15 @@
+{
+  "name": "timer",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "Simon Dahlberg",
+  "license": "MIT",
+  "devDependencies": {
+    "turbo": "^2.3.4"
+  },
+  "packageManager": "pnpm@9.0.0"
+}
