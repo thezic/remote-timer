@@ -3,15 +3,17 @@ use std::{
     time::{Duration, Instant},
 };
 
-use actix_ws::{CloseReason, MessageStream, Session};
+use actix_ws::{CloseCode, CloseReason, MessageStream, Session};
 use futures_util::StreamExt as _;
 use tokio::time::interval;
 use tracing::{error, info, warn};
 
+use crate::server::ServerHandle;
+
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
-pub async fn handler(mut session: Session, stream: MessageStream) {
+pub async fn handler(mut session: Session, stream: MessageStream, server_handle: ServerHandle) {
     info!("connected");
 
     let mut stream = stream.aggregate_continuations();
@@ -30,10 +32,14 @@ pub async fn handler(mut session: Session, stream: MessageStream) {
                     Some(Ok(msg)) => match msg {
                         actix_ws::AggregatedMessage::Text(text) => {
                             info!("Recived text: {text}");
-                            session.text(text).await.unwrap();
+                            if let Err(err) = session.text(text).await {
+                                break Some(CloseReason { code: CloseCode::Abnormal, description: Some(err.to_string())});
+                            }
                         },
                         actix_ws::AggregatedMessage::Binary(_) => warn!("Received unexpected binary message"),
-                        actix_ws::AggregatedMessage::Ping(bytes) => session.pong(&bytes).await.unwrap(),
+                        actix_ws::AggregatedMessage::Ping(bytes) => if session.pong(&bytes).await.is_err() {
+                            break Some(CloseCode::Abnormal.into())
+                        },
                         actix_ws::AggregatedMessage::Pong(_) => last_heartbeat = Instant::now(),
                         actix_ws::AggregatedMessage::Close(reason) => break reason,
                     },
