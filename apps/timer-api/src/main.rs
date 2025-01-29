@@ -2,6 +2,7 @@ use actix_web::{middleware, web, App, Error, HttpRequest, HttpResponse, HttpServ
 use timer_api::{handler, server};
 use tokio::task::spawn_local;
 use tracing::info;
+use uuid::Uuid;
 
 async fn index() -> impl Responder {
     actix_web::HttpResponse::Ok().body("Hello world!")
@@ -10,11 +11,18 @@ async fn index() -> impl Responder {
 async fn ws_handshake(
     req: HttpRequest,
     stream: web::Payload,
+    path: web::Path<(Uuid,)>,
     server_handle: web::Data<server::ServerHandle>,
 ) -> Result<HttpResponse, Error> {
     let (res, session, stream) = actix_ws::handle(&req, stream)?;
 
-    spawn_local(handler::handler(session, stream, (**server_handle).clone()));
+    let (timer_id,) = path.into_inner();
+    spawn_local(handler::handler(
+        session,
+        stream,
+        (**server_handle).clone(),
+        timer_id,
+    ));
 
     Ok(res)
 }
@@ -31,9 +39,9 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .app_data(handle.clone())
+            .app_data(web::Data::new(handle.clone()))
             .service(web::resource("/").to(index))
-            .service(web::resource("/ws").to(ws_handshake))
+            .service(web::resource("/ws/{id}").to(ws_handshake))
             .wrap(middleware::Logger::default())
     })
     .bind(("127.0.0.1", 8080))?

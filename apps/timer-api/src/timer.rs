@@ -1,8 +1,7 @@
-use std::{
-    error::Error,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::interval};
 
 #[derive(Debug)]
@@ -11,9 +10,10 @@ pub enum Command {
     StopCounter,
     SetTime(u32),
     Close,
+    Subscribe(mpsc::UnboundedSender<TimerMessage>),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub enum TimerMessage {
     IsRunning(bool),
     CurrentTime(i32),
@@ -30,10 +30,6 @@ pub struct TimerHandle {
     cmd_tx: mpsc::UnboundedSender<Command>,
 }
 
-type BoxDynError = Box<dyn Error + 'static>;
-
-type Result<T> = std::result::Result<T, BoxDynError>;
-
 impl TimerHandle {
     pub fn start_counter(&self) -> Result<()> {
         Ok(self.cmd_tx.send(Command::StartCounter)?)
@@ -49,6 +45,12 @@ impl TimerHandle {
     pub fn close(&self) -> Result<()> {
         Ok(self.cmd_tx.send(Command::Close)?)
     }
+
+    pub fn subscribe(&self) -> Result<mpsc::UnboundedReceiver<TimerMessage>> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.cmd_tx.send(Command::Subscribe(tx))?;
+        Ok(rx)
+    }
 }
 
 impl Timer {
@@ -60,12 +62,6 @@ impl Timer {
             listeners: Vec::new(),
         };
         (timer, TimerHandle { cmd_tx })
-    }
-
-    pub fn subscribe(&mut self) -> mpsc::UnboundedReceiver<TimerMessage> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.listeners.push(tx);
-        rx
     }
 
     fn broadcast(&mut self, msg: TimerMessage) {
@@ -83,6 +79,9 @@ impl Timer {
             tokio::select! {
                 msg = self.cmd_rx.recv() => {
                     match msg {
+                        Some(Command::Subscribe(tx)) => {
+                            self.listeners.push(tx);
+                        },
                         Some(Command::StartCounter) => {
                             is_counting = true;
                             last_tick = Instant::now();
@@ -124,9 +123,9 @@ mod test {
 
     #[tokio::test]
     async fn test_timer() {
-        let (mut timer, timer_handle) = super::Timer::new();
+        let (timer, timer_handle) = super::Timer::new();
 
-        let mut msg_rx = timer.subscribe();
+        let mut msg_rx = timer_handle.subscribe().unwrap();
         tokio::spawn(async move {
             while let Some(msg) = msg_rx.recv().await {
                 println!("Received: {:?}", msg);
