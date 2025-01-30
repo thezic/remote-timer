@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::timer::{self, Timer, TimerHandle, TimerMessage};
 use anyhow::Result;
@@ -16,13 +16,13 @@ pub enum Command {
     ),
     StartCounter(ConnId, oneshot::Sender<Result<()>>),
     StopCounter(ConnId, oneshot::Sender<Result<()>>),
-    SetTime(ConnId, u32, oneshot::Sender<Result<()>>),
+    SetTime(ConnId, i32, oneshot::Sender<Result<()>>),
 }
 
 pub struct TimerServer {
     command_rx: mpsc::UnboundedReceiver<Command>,
     timers: HashMap<TimerId, TimerHandle>,
-    timer_connections: HashMap<TimerId, HashSet<ConnId>>,
+    clients: HashMap<ConnId, TimerId>,
 }
 
 #[derive(Debug, Clone)]
@@ -40,23 +40,23 @@ impl ServerHandle {
         Ok(rx.await?)
     }
 
-    pub async fn set_time(&self, id: ConnId, time: u32) -> Result<()> {
+    pub async fn set_time(&self, timer_id: ConnId, time: i32) -> Result<()> {
         let (tx, rx) = oneshot::channel();
-        self.cmd_tx.send(Command::SetTime(id, time, tx))?;
+        self.cmd_tx.send(Command::SetTime(timer_id, time, tx))?;
         rx.await?
     }
 
-    // pub fn start_counter(&self, id: TimerId) {
-    //     self.cmd_tx.send(Command::StartCounter(id)).unwrap();
-    // }
+    pub async fn start_counter(&self, conn_id: ConnId) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx.send(Command::StartCounter(conn_id, tx))?;
+        rx.await?
+    }
 
-    // pub fn stop_counter(&self, id: TimerId) {
-    //     self.cmd_tx.send(Command::StopCounter(id)).unwrap();
-    // }
-
-    // pub fn set_time(&self, id: TimerId, time: u32) {
-    //     self.cmd_tx.send(Command::SetTime(id, time)).unwrap();
-    // }
+    pub async fn stop_counter(&self, conn_id: ConnId) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx.send(Command::StopCounter(conn_id, tx))?;
+        rx.await?
+    }
 }
 
 impl TimerServer {
@@ -65,7 +65,8 @@ impl TimerServer {
 
         let server = TimerServer {
             // sessions: HashMap::new(),
-            timer_connections: HashMap::new(),
+            // timer_connections: HashMap::new(),
+            clients: HashMap::new(),
             command_rx: msg_rx,
             timers: HashMap::new(),
         };
@@ -93,14 +94,43 @@ impl TimerServer {
             None => self.create_timer(id),
         };
 
-        self.timer_connections
-            .entry(id)
-            .or_default()
-            .insert(conn_id);
+        self.clients.insert(conn_id, id);
 
         let receiver = timer_handle.subscribe()?;
 
         Ok((conn_id, receiver))
+    }
+
+    fn set_time(&mut self, conn_id: ConnId, time: i32) -> Result<()> {
+        let timer_handle = self.get_timer_handle_for_client(conn_id)?;
+        timer_handle.set_time(time)?;
+
+        Ok(())
+    }
+
+    async fn start_counter(&mut self, _conn_id: ConnId) -> Result<()> {
+        let timer_handle = self.get_timer_handle_for_client(_conn_id)?;
+        timer_handle.start_counter()?;
+        Ok(())
+    }
+
+    async fn stop_counter(&mut self, _conn_id: ConnId) -> Result<()> {
+        let timer_handle = self.get_timer_handle_for_client(_conn_id)?;
+        timer_handle.stop_counter()?;
+        Ok(())
+    }
+
+    fn get_timer_handle_for_client(&self, conn_id: ConnId) -> Result<&TimerHandle> {
+        let handle = self
+            .clients
+            .get(&conn_id)
+            .and_then(|timer_id| self.timers.get(timer_id));
+
+        if let Some(handle) = handle {
+            Ok(handle)
+        } else {
+            Err(anyhow::anyhow!("No timer found for client {conn_id}"))
+        }
     }
 
     pub async fn run(mut self) {
@@ -115,9 +145,27 @@ impl TimerServer {
                         warn!("failed to send connection id");
                     };
                 }
-                Command::StartCounter(_, _) => todo!(),
-                Command::StopCounter(_, _) => todo!(),
-                Command::SetTime(id, time, signal) => todo!(),
+                Command::StartCounter(conn_id, signal) => {
+                    // TODO: Handle error here
+                    self.start_counter(conn_id).await.unwrap();
+                    if signal.send(Ok(())).is_err() {
+                        warn!("failed to send start counter response to client {conn_id}");
+                    }
+                }
+                Command::StopCounter(conn_id, signal) => {
+                    // TODO: Handle error here
+                    self.stop_counter(conn_id).await.unwrap();
+                    if signal.send(Ok(())).is_err() {
+                        warn!("failed to send stop counter response to client {conn_id}");
+                    }
+                }
+                Command::SetTime(conn_id, time, signal) => {
+                    // TODO: Handle error here
+                    self.set_time(conn_id, time).unwrap();
+                    if let Err(err) = signal.send(Ok(())) {
+                        warn!("failed to send set time response to {conn_id}: {err:?}");
+                    }
+                }
             }
         }
     }

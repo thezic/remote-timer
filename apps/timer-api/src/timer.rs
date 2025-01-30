@@ -8,7 +8,7 @@ use tokio::{sync::mpsc, time::interval};
 pub enum Command {
     StartCounter,
     StopCounter,
-    SetTime(u32),
+    SetTime(i32),
     Close,
     Subscribe(mpsc::UnboundedSender<TimerMessage>),
 }
@@ -39,7 +39,7 @@ impl TimerHandle {
         Ok(self.cmd_tx.send(Command::StopCounter)?)
     }
 
-    pub fn set_time(&self, time: u32) -> Result<()> {
+    pub fn set_time(&self, time: i32) -> Result<()> {
         Ok(self.cmd_tx.send(Command::SetTime(time))?)
     }
     pub fn close(&self) -> Result<()> {
@@ -92,7 +92,7 @@ impl Timer {
                             self.broadcast(TimerMessage::IsRunning(false));
                         },
                         Some(Command::SetTime(time)) => {
-                            self.time = time as i32;
+                            self.time = time;
                         },
                         Some(Command::Close) => break,
                         None => break,
@@ -118,6 +118,7 @@ impl Timer {
     }
 }
 
+#[cfg(test)]
 mod test {
     use tokio::time::{sleep, Duration};
 

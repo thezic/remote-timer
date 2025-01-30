@@ -55,7 +55,7 @@ pub async fn handler(
                     Some(Ok(msg)) => match msg {
                         actix_ws::AggregatedMessage::Text(text) => {
                             info!("Recived text: {text}");
-                            if let Err(err) = handle_text_message(conn_id, &text, server_handle.clone()) {
+                            if let Err(err) = handle_text_message(conn_id, &text, server_handle.clone()).await {
                                 error!("Error: {err}");
                             }
                         },
@@ -101,16 +101,19 @@ pub async fn handler(
 enum Message {
     StartTimer,
     StopTimer,
-    SetTime { time: u32 },
+    SetTime { time: i32 },
 }
 
-fn handle_text_message(conn_id: Uuid, message: &str, server_handle: ServerHandle) -> Result<()> {
+async fn handle_text_message(
+    conn_id: Uuid,
+    message: &str,
+    server_handle: ServerHandle,
+) -> Result<()> {
     let msg: Message = serde_json::from_str(message)?;
 
     match msg {
-        Message::StartTimer => todo!(),
-        Message::StopTimer => todo!(),
-        Message::SetTime { time } => server_handle.set_time(conn_id, time),
-    };
-    Ok(())
+        Message::StartTimer => server_handle.start_counter(conn_id).await,
+        Message::StopTimer => server_handle.stop_counter(conn_id).await,
+        Message::SetTime { time } => server_handle.set_time(conn_id, time).await,
+    }
 }
