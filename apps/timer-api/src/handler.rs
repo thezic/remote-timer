@@ -75,7 +75,6 @@ pub async fn handler(
             },
 
             msg = timer_msg.recv() => {
-                info!("Timer message: {msg:?}");
                 let json = serde_json::to_string(&msg).unwrap();
                 // TODO: Handle error
                 _ = session.text(json).await;

@@ -93,6 +93,9 @@ impl Timer {
                         },
                         Some(Command::SetTime(time)) => {
                             self.time = time;
+                            if !is_counting {
+                                self.broadcast(TimerMessage::CurrentTime(self.time));
+                            }
                         },
                         Some(Command::Close) => break,
                         None => break,
