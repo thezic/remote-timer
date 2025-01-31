@@ -18,10 +18,12 @@ export class TimerService {
 
 		socket.addEventListener('open', () => {
 			this.state = 'connected';
+			this._socket = socket;
 		});
 
 		const reconnect = () => {
 			this.state = 'disconnected';
+			this._socket = null;
 			setTimeout(() => this.connect(url), 1000);
 		};
 
@@ -29,8 +31,6 @@ export class TimerService {
 		socket.addEventListener('error', reconnect);
 
 		socket.addEventListener('message', (event) => {
-			console.log(event.data);
-			// console.log('Message from server ', event.data);
 			const msg = JSON.parse(event.data) as Message;
 			if ('CurrentTime' in msg) {
 				this.time = msg.CurrentTime;
@@ -43,6 +43,7 @@ export class TimerService {
 
 	_sendMessage(command: Command) {
 		if (this._socket) {
+			console.log('Sending', command);
 			this._socket.send(JSON.stringify(command));
 		}
 	}

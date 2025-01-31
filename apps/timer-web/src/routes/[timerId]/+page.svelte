@@ -20,9 +20,6 @@
 		service.connect(wsUrl);
 	});
 
-	let currentTime = $state(0);
-	let isRunning = $state(false);
-
 	function startTimer() {
 		service.startTimer();
 	}
@@ -31,22 +28,23 @@
 		service.stopTimer();
 	}
 
-	let newTime = $state(0);
+	let newTime = $state(900);
 	function setTime() {
+		console.log('hello', service);
 		service.setTime(newTime);
 	}
 
-	const formattedTime = $derived(formatTimeFromMs(currentTime));
+	const formattedTime = $derived(formatTimeFromMs(service.time));
 </script>
 
-<h1>Timer {timerId}</h1>
+<h1>Timer {timerId} status:{service.state}</h1>
 <div class="flex flex-col items-center justify-center px-5 py-10">
 	<div>
 		<div class="py-2 text-4xl font-bold">{formattedTime}</div>
 	</div>
 	<div class="flex grow justify-between">
-		<Button text="Start" onclick={startTimer} disabled={isRunning} />
-		<Button text="Stop" onclick={stopTimer} disabled={!isRunning} />
+		<Button text="Start" onclick={startTimer} disabled={service.isRunning} />
+		<Button text="Stop" onclick={stopTimer} disabled={!service.isRunning} />
 	</div>
 	<div class="py-2">
 		<div>
