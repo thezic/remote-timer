@@ -12,8 +12,10 @@
 	let { data }: PageProps = $props();
 
 	let wsUrl = `${data.timerApi}/ws/${timerId}`;
+	let currentPageUrl = $state('');
 
 	onMount(() => {
+		currentPageUrl = location.href;
 		socket = new WebSocket(wsUrl);
 		socket.onopen = function () {
 			console.log('WebSocket is connected');
@@ -66,5 +68,5 @@
 			<Button text="Set time" onclick={setTime} />
 		</div>
 	</div>
-	<div><QrCode value={location.href} size="100" /></div>
+	<div><QrCode value={currentPageUrl} size="100" /></div>
 </div>
