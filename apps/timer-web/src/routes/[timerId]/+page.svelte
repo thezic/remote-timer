@@ -18,6 +18,7 @@
 
 	onMount(() => {
 		service.connect(wsUrl);
+		currentPageUrl = window.location.href;
 	});
 
 	function startTimer() {
