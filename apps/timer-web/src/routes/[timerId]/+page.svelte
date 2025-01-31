@@ -1,8 +1,11 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { formatTimeFromMs } from '$lib/time';
+	import TimeInput from '$lib/components/TimeInput.svelte';
 	import { onMount } from 'svelte';
 	import type { PageProps } from './$types';
+	import Button from '$lib/components/Button.svelte';
+	import QrCode from 'svelte-qrcode';
 
 	let timerId = page.params.timerId;
 	let socket: WebSocket;
@@ -17,7 +20,6 @@
 		};
 
 		socket.onmessage = function (event) {
-			// console.log('Message from server ', event.data);
 			const msg = JSON.parse(event.data) as Message;
 			if ('CurrentTime' in msg) {
 				currentTime = msg.CurrentTime;
@@ -41,30 +43,28 @@
 		socket.send(JSON.stringify({ type: 'StopTimer' }));
 	}
 
-	let newTime = $state('0');
+	let newTime = $state(10 * 60);
 	function setTime() {
-		socket.send(JSON.stringify({ type: 'SetTime', time: parseInt(newTime) * 1000 }));
+		socket.send(JSON.stringify({ type: 'SetTime', time: newTime * 1000 }));
 	}
 
 	const formattedTime = $derived(formatTimeFromMs(currentTime));
 </script>
 
 <h1>Timer {timerId}</h1>
-<div class="px-5 py-10">
-	<div class="py-2 text-4xl font-bold">{formattedTime}</div>
-	<div>isRunning: {isRunning}</div>
+<div class="flex flex-col items-center justify-center px-5 py-10">
 	<div>
-		<button class="rounded border bg-slate-300 px-5 py-1 hover:bg-slate-200" onclick={startTimer}
-			>Start</button
-		>
-		<button class="rounded border bg-slate-300 px-5 py-1 hover:bg-slate-200" onclick={stopTimer}
-			>Stop</button
-		>
+		<div class="py-2 text-4xl font-bold">{formattedTime}</div>
+	</div>
+	<div class="flex grow justify-between">
+		<Button text="Start" onclick={startTimer} disabled={isRunning} />
+		<Button text="Stop" onclick={stopTimer} disabled={!isRunning} />
 	</div>
 	<div class="py-2">
-		<input type="text" class="rounded border px-2 py-1" bind:value={newTime} />
-		<button class="rounded border bg-slate-300 px-5 py-1 hover:bg-slate-200" onclick={setTime}
-			>Set time (in seconds)</button
-		>
+		<div>
+			<TimeInput value={newTime} oninput={(value) => (newTime = value)} />
+			<Button text="Set time" onclick={setTime} />
+		</div>
 	</div>
+	<div><QrCode value={location.href} size="100" /></div>
 </div>
