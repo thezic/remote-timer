@@ -1,11 +1,9 @@
 use actix_web::{
-    middleware,
     web::{self, ServiceConfig},
-    App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
+    Error, HttpRequest, HttpResponse, Responder,
 };
 use timer_api::{handler, server};
 use tokio::task::spawn_local;
-use tracing::info;
 use uuid::Uuid;
 
 async fn index() -> impl Responder {
@@ -34,10 +32,6 @@ async fn ws_handshake(
 #[shuttle_runtime::main]
 async fn main(
 ) -> shuttle_actix_web::ShuttleActixWeb<impl FnOnce(&mut ServiceConfig) + Send + Clone + 'static> {
-    // tracing_subscriber::fmt::init();
-
-    // info!("Starting server at http://127.0.0.1:8080");
-
     let (timer_server, handle) = server::TimerServer::new();
 
     tokio::spawn(timer_server.run());
@@ -46,19 +40,7 @@ async fn main(
         cfg.app_data(web::Data::new(handle.clone()))
             .service(web::resource("/").to(index))
             .service(web::resource("/ws/{id}").to(ws_handshake));
-        // .wrap(middleware::Logger::default());
     };
 
     Ok(config.into())
-
-    // HttpServer::new(move || {
-    //     App::new()
-    //         .app_data(web::Data::new(handle.clone()))
-    //         .service(web::resource("/").to(index))
-    //         .service(web::resource("/ws/{id}").to(ws_handshake))
-    //         .wrap(middleware::Logger::default())
-    // })
-    // .bind(("127.0.0.1", 8080))?
-    // .run()
-    // .await
 }
