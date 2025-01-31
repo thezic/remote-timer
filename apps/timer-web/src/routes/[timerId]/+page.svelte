@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { PUBLIC_TIMER_API } from '$env/static/public';
 	import { formatTimeFromMs } from '$lib/time';
 	import { onMount } from 'svelte';
+	import type { PageProps } from './$types';
 
 	let timerId = page.params.timerId;
 	let socket: WebSocket;
-	let wsUrl = `${PUBLIC_TIMER_API}/ws/${timerId}`;
+	let { data }: PageProps = $props();
+
+	let wsUrl = `${data.timerApi}/ws/${timerId}`;
 
 	onMount(() => {
 		socket = new WebSocket(wsUrl);
