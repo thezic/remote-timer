@@ -1,3 +1,4 @@
+import { formatTimeFromMs } from './time';
 type ConnectionState = 'disconnected' | 'connecting' | 'connected';
 type Message = { CurrentTime: number } | { IsRunning: boolean };
 type Command = { type: 'StartTimer' } | { type: 'StopTimer' } | { type: 'SetTime'; time: number };
@@ -6,6 +7,7 @@ export class TimerService {
 	state: ConnectionState = $state('disconnected');
 	time = $state(0);
 	isRunning = $state(false);
+	formattedTime = $derived(formatTimeFromMs(this.time));
 
 	_socket: WebSocket | null = null;
 

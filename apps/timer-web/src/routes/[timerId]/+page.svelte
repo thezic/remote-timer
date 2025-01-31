@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { formatTimeFromMs } from '$lib/time';
 	import TimeInput from '$lib/components/TimeInput.svelte';
 	import { onMount } from 'svelte';
 	import type { PageProps } from './$types';
-	import { TimerService } from './timerService.svelte';
+	import { TimerService } from '$lib/timerService.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import QrCode from 'svelte-qrcode';
 
@@ -34,14 +33,12 @@
 		console.log('hello', service);
 		service.setTime(newTime);
 	}
-
-	const formattedTime = $derived(formatTimeFromMs(service.time));
 </script>
 
 <h1>Timer {timerId} status:{service.state}</h1>
 <div class="flex flex-col items-center justify-center px-5 py-10">
 	<div>
-		<div class="py-2 text-4xl font-bold">{formattedTime}</div>
+		<div class="py-2 text-4xl font-bold">{service.formattedTime}</div>
 	</div>
 	<div class="flex grow justify-between">
 		<Button text="Start" onclick={startTimer} disabled={service.isRunning} />
@@ -53,5 +50,5 @@
 			<Button text="Set time" onclick={setTime} />
 		</div>
 	</div>
-	<div><QrCode value={currentPageUrl} size="100" /></div>
+	<div><QrCode value={currentPageUrl + '/display'} size="100" /></div>
 </div>
