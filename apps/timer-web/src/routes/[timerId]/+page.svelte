@@ -3,47 +3,33 @@
 	import { formatTimeFromMs } from '$lib/time';
 	import { onMount } from 'svelte';
 	import type { PageProps } from './$types';
+	import { TimerService } from './timerService.svelte';
 
 	let timerId = page.params.timerId;
-	let socket: WebSocket;
 	let { data }: PageProps = $props();
 
 	let wsUrl = `${data.timerApi}/ws/${timerId}`;
 
-	onMount(() => {
-		socket = new WebSocket(wsUrl);
-		socket.onopen = function () {
-			console.log('WebSocket is connected');
-		};
+	const service = new TimerService();
 
-		socket.onmessage = function (event) {
-			// console.log('Message from server ', event.data);
-			const msg = JSON.parse(event.data) as Message;
-			if ('CurrentTime' in msg) {
-				currentTime = msg.CurrentTime;
-			}
-			if ('IsRunning' in msg) {
-				isRunning = msg.IsRunning;
-			}
-		};
+	onMount(() => {
+		service.connect(wsUrl);
 	});
 
 	let currentTime = $state(0);
 	let isRunning = $state(false);
 
-	type Message = { CurrentTime: number } | { IsRunning: boolean };
-
 	function startTimer() {
-		socket.send(JSON.stringify({ type: 'StartTimer' }));
+		service.startTimer();
 	}
 
 	function stopTimer() {
-		socket.send(JSON.stringify({ type: 'StopTimer' }));
+		service.stopTimer();
 	}
 
-	let newTime = $state('0');
+	let newTime = $state(0);
 	function setTime() {
-		socket.send(JSON.stringify({ type: 'SetTime', time: parseInt(newTime) * 1000 }));
+		service.setTime(newTime);
 	}
 
 	const formattedTime = $derived(formatTimeFromMs(currentTime));
