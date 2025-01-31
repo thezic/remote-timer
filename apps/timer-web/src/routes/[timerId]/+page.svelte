@@ -4,63 +4,48 @@
 	import TimeInput from '$lib/components/TimeInput.svelte';
 	import { onMount } from 'svelte';
 	import type { PageProps } from './$types';
+	import { TimerService } from './timerService.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import QrCode from 'svelte-qrcode';
 
 	let timerId = page.params.timerId;
-	let socket: WebSocket;
 	let { data }: PageProps = $props();
 
 	let wsUrl = `${data.timerApi}/ws/${timerId}`;
 	let currentPageUrl = $state('');
 
-	onMount(() => {
-		currentPageUrl = location.href;
-		socket = new WebSocket(wsUrl);
-		socket.onopen = function () {
-			console.log('WebSocket is connected');
-		};
+	const service = new TimerService();
 
-		socket.onmessage = function (event) {
-			const msg = JSON.parse(event.data) as Message;
-			if ('CurrentTime' in msg) {
-				currentTime = msg.CurrentTime;
-			}
-			if ('IsRunning' in msg) {
-				isRunning = msg.IsRunning;
-			}
-		};
+	onMount(() => {
+		service.connect(wsUrl);
+		currentPageUrl = window.location.href;
 	});
 
-	let currentTime = $state(0);
-	let isRunning = $state(false);
-
-	type Message = { CurrentTime: number } | { IsRunning: boolean };
-
 	function startTimer() {
-		socket.send(JSON.stringify({ type: 'StartTimer' }));
+		service.startTimer();
 	}
 
 	function stopTimer() {
-		socket.send(JSON.stringify({ type: 'StopTimer' }));
+		service.stopTimer();
 	}
 
-	let newTime = $state(10 * 60);
+	let newTime = $state(900);
 	function setTime() {
-		socket.send(JSON.stringify({ type: 'SetTime', time: newTime * 1000 }));
+		console.log('hello', service);
+		service.setTime(newTime);
 	}
 
-	const formattedTime = $derived(formatTimeFromMs(currentTime));
+	const formattedTime = $derived(formatTimeFromMs(service.time));
 </script>
 
-<h1>Timer {timerId}</h1>
+<h1>Timer {timerId} status:{service.state}</h1>
 <div class="flex flex-col items-center justify-center px-5 py-10">
 	<div>
 		<div class="py-2 text-4xl font-bold">{formattedTime}</div>
 	</div>
 	<div class="flex grow justify-between">
-		<Button text="Start" onclick={startTimer} disabled={isRunning} />
-		<Button text="Stop" onclick={stopTimer} disabled={!isRunning} />
+		<Button text="Start" onclick={startTimer} disabled={service.isRunning} />
+		<Button text="Stop" onclick={stopTimer} disabled={!service.isRunning} />
 	</div>
 	<div class="py-2">
 		<div>
