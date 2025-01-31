@@ -1,12 +1,15 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { PUBLIC_TIMER_API } from '$env/static/public';
+	import { formatTimeFromMs } from '$lib/time';
 	import { onMount } from 'svelte';
 
 	let timerId = page.params.timerId;
 	let socket: WebSocket;
+	let wsUrl = `${PUBLIC_TIMER_API}/ws/${timerId}`;
 
 	onMount(() => {
-		socket = new WebSocket(`ws://localhost:8080/ws/${timerId}`);
+		socket = new WebSocket(wsUrl);
 		socket.onopen = function () {
 			console.log('WebSocket is connected');
 		};
@@ -38,28 +41,28 @@
 
 	let newTime = $state('0');
 	function setTime() {
-		socket.send(JSON.stringify({ type: 'SetTime', time: parseInt(newTime) }));
+		socket.send(JSON.stringify({ type: 'SetTime', time: parseInt(newTime) * 1000 }));
 	}
 
-	function formatTime(time: number) {
-		const allSeconds = Math.floor(time / 1000);
-		const hours = Math.floor(allSeconds / 3600);
-		const minutes = Math.floor((allSeconds % 3600) / 60);
-		const seconds = allSeconds % 60;
-		return `${hours}:${minutes}:${seconds}`;
-	}
-
-	const formattedTime = $derived(formatTime(currentTime));
+	const formattedTime = $derived(formatTimeFromMs(currentTime));
 </script>
 
 <h1>Timer {timerId}</h1>
-<div>isRunning: {isRunning}</div>
-<div>time: {formattedTime}</div>
-<div>
-	<button class="rounded border px-5" onclick={startTimer}>Start</button>
-	<button class="rounded border px-5" onclick={stopTimer}>Stop</button>
-</div>
-<div>
-	<input type="text" class="rounded border" bind:value={newTime} />
-	<button class="rounded border px-5" onclick={setTime}>Set time</button>
+<div class="px-5 py-10">
+	<div class="py-2 text-4xl font-bold">{formattedTime}</div>
+	<div>isRunning: {isRunning}</div>
+	<div>
+		<button class="rounded border bg-slate-300 px-5 py-1 hover:bg-slate-200" onclick={startTimer}
+			>Start</button
+		>
+		<button class="rounded border bg-slate-300 px-5 py-1 hover:bg-slate-200" onclick={stopTimer}
+			>Stop</button
+		>
+	</div>
+	<div class="py-2">
+		<input type="text" class="rounded border px-2 py-1" bind:value={newTime} />
+		<button class="rounded border bg-slate-300 px-5 py-1 hover:bg-slate-200" onclick={setTime}
+			>Set time (in seconds)</button
+		>
+	</div>
 </div>

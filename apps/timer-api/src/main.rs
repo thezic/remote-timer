@@ -1,4 +1,8 @@
-use actix_web::{middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{
+    middleware,
+    web::{self, ServiceConfig},
+    App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
+};
 use timer_api::{handler, server};
 use tokio::task::spawn_local;
 use tracing::info;
@@ -27,24 +31,34 @@ async fn ws_handshake(
     Ok(res)
 }
 
-#[tokio::main]
-async fn main() -> std::io::Result<()> {
-    tracing_subscriber::fmt::init();
+#[shuttle_runtime::main]
+async fn main(
+) -> shuttle_actix_web::ShuttleActixWeb<impl FnOnce(&mut ServiceConfig) + Send + Clone + 'static> {
+    // tracing_subscriber::fmt::init();
 
-    info!("Starting server at http://127.0.0.1:8080");
+    // info!("Starting server at http://127.0.0.1:8080");
 
     let (timer_server, handle) = server::TimerServer::new();
 
     tokio::spawn(timer_server.run());
 
-    HttpServer::new(move || {
-        App::new()
-            .app_data(web::Data::new(handle.clone()))
+    let config = move |cfg: &mut ServiceConfig| {
+        cfg.app_data(web::Data::new(handle.clone()))
             .service(web::resource("/").to(index))
-            .service(web::resource("/ws/{id}").to(ws_handshake))
-            .wrap(middleware::Logger::default())
-    })
-    .bind(("127.0.0.1", 8080))?
-    .run()
-    .await
+            .service(web::resource("/ws/{id}").to(ws_handshake));
+        // .wrap(middleware::Logger::default());
+    };
+
+    Ok(config.into())
+
+    // HttpServer::new(move || {
+    //     App::new()
+    //         .app_data(web::Data::new(handle.clone()))
+    //         .service(web::resource("/").to(index))
+    //         .service(web::resource("/ws/{id}").to(ws_handshake))
+    //         .wrap(middleware::Logger::default())
+    // })
+    // .bind(("127.0.0.1", 8080))?
+    // .run()
+    // .await
 }
