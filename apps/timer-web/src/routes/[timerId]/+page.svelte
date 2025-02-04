@@ -1,23 +1,18 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import TimeInput from '$lib/components/TimeInput.svelte';
-	import { onMount } from 'svelte';
-	import type { PageProps } from './$types';
+	import { getContext, onMount } from 'svelte';
 	import { TimerService } from '$lib/timerService.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import QrCode from 'svelte-qrcode';
 
 	let timerId = page.params.timerId;
-	let { data }: PageProps = $props();
-
-	let wsUrl = `${data.timerApi}/ws/${timerId}`;
 	let currentPageUrl = $state('');
 	let displayUrl = $derived(currentPageUrl + '/display');
 
-	const service = new TimerService();
+	const service = getContext('service') as TimerService;
 
 	onMount(() => {
-		service.connect(wsUrl);
 		currentPageUrl = window.location.href;
 	});
 

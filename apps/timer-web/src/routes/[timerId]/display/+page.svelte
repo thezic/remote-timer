@@ -1,18 +1,8 @@
 <script lang="ts">
-	import { page } from '$app/state';
 	import { TimerService } from '$lib/timerService.svelte';
-	import { onMount } from 'svelte';
-	import type { PageProps } from './$types';
+	import { getContext } from 'svelte';
 
-	const service = new TimerService();
-	let timerId = page.params.timerId;
-
-	let { data }: PageProps = $props();
-	const wsUrl = `${data.timerApi}/ws/${timerId}`;
-
-	onMount(() => {
-		service.connect(wsUrl);
-	});
+	const service = getContext('service') as TimerService;
 </script>
 
 <div class="flex h-screen items-center justify-center p-5">

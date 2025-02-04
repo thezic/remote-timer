@@ -14,9 +14,9 @@ pub enum Command {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
-pub enum TimerMessage {
-    IsRunning(bool),
-    CurrentTime(i32),
+pub struct TimerMessage {
+    is_running: bool,
+    current_time: i32,
 }
 
 pub struct Timer {
@@ -85,21 +85,16 @@ impl Timer {
                         Some(Command::StartCounter) => {
                             is_counting = true;
                             last_tick = Instant::now();
-                            self.broadcast(TimerMessage::IsRunning(true));
                         },
                         Some(Command::StopCounter) => {
                             is_counting = false;
-                            self.broadcast(TimerMessage::IsRunning(false));
                         },
                         Some(Command::SetTime(time)) => {
                             self.time = time;
-                            if !is_counting {
-                                self.broadcast(TimerMessage::CurrentTime(self.time));
-                            }
                         },
                         Some(Command::Close) => break,
                         None => break,
-                    }
+                    };
                 }
 
                 _ = interval.tick(), if is_counting => {
@@ -110,13 +105,12 @@ impl Timer {
                         self.time = 0;
                         is_counting = false;
                     }
-
-                    self.broadcast(TimerMessage::CurrentTime(self.time));
-                    if !is_counting {
-                        self.broadcast(TimerMessage::IsRunning(false));
-                    }
                 }
             }
+            self.broadcast(TimerMessage {
+                is_running: is_counting,
+                current_time: self.time,
+            });
         }
     }
 }
