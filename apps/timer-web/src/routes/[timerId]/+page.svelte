@@ -12,6 +12,7 @@
 
 	let wsUrl = `${data.timerApi}/ws/${timerId}`;
 	let currentPageUrl = $state('');
+	let displayUrl = $derived(currentPageUrl + '/display');
 
 	const service = new TimerService();
 
@@ -30,7 +31,6 @@
 
 	let newTime = $state(900);
 	function setTime() {
-		console.log('hello', service);
 		service.setTime(newTime);
 	}
 </script>
@@ -45,10 +45,11 @@
 		<Button text="Stop" onclick={stopTimer} disabled={!service.isRunning} />
 	</div>
 	<div class="py-2">
-		<div>
-			<TimeInput value={newTime} oninput={(value) => (newTime = value)} />
-			<Button text="Set time" onclick={setTime} />
-		</div>
+		<form class="flex flex-row" onsubmit={setTime}>
+			<TimeInput value={newTime} onchange={(value) => (newTime = value)} />
+			<div><Button text="Set time" type="submit" /></div>
+		</form>
 	</div>
-	<div><QrCode value={currentPageUrl + '/display'} size="100" /></div>
+	<div><QrCode value={currentPageUrl} size="100" /></div>
+	<div><a href={displayUrl} class="underline">Display</a></div>
 </div>
