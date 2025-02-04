@@ -64,8 +64,6 @@ impl TimerServer {
         let (msg_tx, msg_rx) = mpsc::unbounded_channel::<Command>();
 
         let server = TimerServer {
-            // sessions: HashMap::new(),
-            // timer_connections: HashMap::new(),
             clients: HashMap::new(),
             command_rx: msg_rx,
             timers: HashMap::new(),
