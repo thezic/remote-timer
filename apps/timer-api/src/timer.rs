@@ -17,6 +17,7 @@ pub enum Command {
 pub struct TimerMessage {
     is_running: bool,
     current_time: i32,
+    client_count: usize,
 }
 
 pub struct Timer {
@@ -110,6 +111,7 @@ impl Timer {
             self.broadcast(TimerMessage {
                 is_running: is_counting,
                 current_time: self.time,
+                client_count: self.listeners.len(),
             });
         }
     }

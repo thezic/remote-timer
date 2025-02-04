@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use actix_ws::{CloseCode, CloseReason, MessageStream, Session};
 use futures_util::StreamExt as _;
 use tokio::time::interval;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use anyhow::Result;
@@ -50,11 +50,10 @@ pub async fn handler(
 
         tokio::select! {
             msg = stream.next() => {
-                info!("received message: {msg:?}");
+                debug!("received message: {msg:?}");
                 match msg {
                     Some(Ok(msg)) => match msg {
                         actix_ws::AggregatedMessage::Text(text) => {
-                            info!("Recived text: {text}");
                             if let Err(err) = handle_text_message(conn_id, &text, server_handle.clone()).await {
                                 error!("Error: {err}");
                             }
@@ -81,7 +80,6 @@ pub async fn handler(
             }
 
             _tick = tick => {
-                info!("tick");
                 if Instant::now() - last_heartbeat > CLIENT_TIMEOUT {
                     break Some(CloseReason { code: actix_ws::CloseCode::Error, description: Some("Client timeout".to_string()) });
                 }

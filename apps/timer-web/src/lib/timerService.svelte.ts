@@ -1,12 +1,14 @@
 import { formatTimeFromMs } from './time';
 type ConnectionState = 'disconnected' | 'connecting' | 'connected';
-type Message = { current_time: number; is_running: boolean };
+type Message = { current_time: number; is_running: boolean; client_count: number };
 type Command = { type: 'StartTimer' } | { type: 'StopTimer' } | { type: 'SetTime'; time: number };
 
 export class TimerService {
 	state: ConnectionState = $state('disconnected');
 	time = $state(0);
 	isRunning = $state(false);
+	numberOfClients = $state(0);
+
 	formattedTime = $derived(formatTimeFromMs(this.time));
 
 	_socket: WebSocket | null = null;
@@ -37,6 +39,7 @@ export class TimerService {
 			const msg = JSON.parse(event.data) as Message;
 			this.time = msg.current_time;
 			this.isRunning = msg.is_running;
+			this.numberOfClients = msg.client_count;
 		});
 	}
 
