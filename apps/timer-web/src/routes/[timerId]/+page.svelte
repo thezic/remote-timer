@@ -34,7 +34,7 @@
 	const presetTimes = [30 * 60, 15 * 60, 10 * 60, 5 * 60, 3 * 60, 1 * 60];
 </script>
 
-<div class="flex h-screen flex-col">
+<div class="flex h-dvh flex-col">
 	<header class="flex-none">
 		<ConnectionStatusBar
 			{timerId}
