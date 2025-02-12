@@ -1,7 +1,7 @@
 import { formatTimeFromMs } from './time';
 import { retry, tryit } from 'radash';
 
-type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'closed';
+export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'closed';
 type Message = { current_time: number; is_running: boolean; client_count: number };
 type Command = { type: 'StartTimer' } | { type: 'StopTimer' } | { type: 'SetTime'; time: number };
 
