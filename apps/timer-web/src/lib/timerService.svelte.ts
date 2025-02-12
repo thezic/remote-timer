@@ -1,7 +1,33 @@
 import { formatTimeFromMs } from './time';
-type ConnectionState = 'disconnected' | 'connecting' | 'connected';
+import { retry, tryit } from 'radash';
+
+export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'closed';
 type Message = { current_time: number; is_running: boolean; client_count: number };
 type Command = { type: 'StartTimer' } | { type: 'StopTimer' } | { type: 'SetTime'; time: number };
+
+class AbortError extends Error {
+	constructor() {
+		super('abort');
+		Object.setPrototypeOf(this, new.target.prototype);
+	}
+}
+function connect(url: string): Promise<WebSocket> {
+	return new Promise((resolve, reject) => {
+		const socket = new WebSocket(url);
+
+		socket.addEventListener('open', () => resolve(socket), { once: true });
+		socket.addEventListener('error', reject, { once: true });
+	});
+}
+
+async function connectWithRetry(url: string, signal: AbortSignal): Promise<WebSocket | undefined> {
+	return await retry({ delay: 1000, times: Infinity }, (exit) => {
+		if (signal.aborted) {
+			exit(new AbortError());
+		}
+		return connect(url);
+	});
+}
 
 export class TimerService {
 	state: ConnectionState = $state('disconnected');
@@ -11,31 +37,62 @@ export class TimerService {
 
 	formattedTime = $derived(formatTimeFromMs(this.time));
 
-	_socket: WebSocket | null = null;
+	_socket: WebSocket | undefined;
+	_abortController: AbortController | undefined;
+	_url: string | undefined;
 
-	connect(url: string) {
+	async connect(url: string) {
 		if (WebSocket == undefined) {
 			return;
 		}
 		this.state = 'connecting';
-		const socket = new WebSocket(url);
 
-		socket.addEventListener('open', () => {
-			this.state = 'connected';
-			this._socket = socket;
-		});
+		if (this._abortController) {
+			this._abortController.abort();
+		}
+		this._abortController = new AbortController();
+		const signal = this._abortController.signal;
 
-		const reconnect = () => {
+		const [error, socket] = await tryit(connectWithRetry)(url, signal);
+		this._socket = socket;
+
+		if (!socket) {
 			this.state = 'disconnected';
-			this._socket = null;
-			setTimeout(() => this.connect(url), 1000);
+			if (error instanceof AbortError) {
+				return;
+			} else {
+				throw error;
+			}
+		}
+
+		this._wireSocket(socket, url);
+		this.state = 'connected';
+	}
+
+	close() {
+		this.state = 'closed';
+		this._socket?.close();
+		this._socket = undefined;
+
+		if (this._abortController) {
+			this._abortController.abort();
+			this._abortController = undefined;
+		}
+	}
+
+	_wireSocket(socket: WebSocket, url: string) {
+		const reconnect = () => {
+			this._socket = undefined;
+			if (this.state == 'closed') {
+				return;
+			}
+			this.connect(url);
 		};
 
-		socket.addEventListener('close', reconnect);
-		socket.addEventListener('error', reconnect);
+		socket.addEventListener('close', reconnect, { once: true });
+		socket.addEventListener('error', reconnect, { once: true });
 
 		socket.addEventListener('message', (event) => {
-			console.log('Received', event.data);
 			const msg = JSON.parse(event.data) as Message;
 			this.time = msg.current_time;
 			this.isRunning = msg.is_running;
@@ -45,7 +102,6 @@ export class TimerService {
 
 	_sendMessage(command: Command) {
 		if (this._socket) {
-			console.log('Sending', command);
 			this._socket.send(JSON.stringify(command));
 		}
 	}

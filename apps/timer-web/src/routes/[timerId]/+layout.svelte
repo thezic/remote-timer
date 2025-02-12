@@ -13,6 +13,9 @@
 	let wsUrl = `${data.timerApi}/ws/${timerId}`;
 	onMount(() => {
 		service.connect(wsUrl);
+		return () => {
+			service.close();
+		};
 	});
 </script>
 
