@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use anyhow::Result;
 
-use crate::server::ServerHandle;
+use crate::server::{BoundServerHandle, ServerHandle};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -32,7 +32,7 @@ pub async fn handler(
     let mut last_heartbeat = Instant::now();
     let mut interval = interval(HEARTBEAT_INTERVAL);
 
-    let (conn_id, mut timer_msg) = match server_handle.connect(timer_id).await {
+    let (bound_handle, mut timer_msg) = match server_handle.connect(timer_id).await {
         Ok(stuff) => stuff,
         Err(err) => {
             let _ = session
@@ -54,7 +54,7 @@ pub async fn handler(
                 match msg {
                     Some(Ok(msg)) => match msg {
                         actix_ws::AggregatedMessage::Text(text) => {
-                            if let Err(err) = handle_text_message(conn_id, &text, server_handle.clone()).await {
+                            if let Err(err) = handle_text_message(&text, &bound_handle).await {
                                 error!("Error: {err}");
                             }
                         },
@@ -101,16 +101,12 @@ enum Message {
     SetTime { time: i32 },
 }
 
-async fn handle_text_message(
-    conn_id: Uuid,
-    message: &str,
-    server_handle: ServerHandle,
-) -> Result<()> {
+async fn handle_text_message(message: &str, server_handle: &BoundServerHandle) -> Result<()> {
     let msg: Message = serde_json::from_str(message)?;
 
     match msg {
-        Message::StartTimer => server_handle.start_counter(conn_id).await,
-        Message::StopTimer => server_handle.stop_counter(conn_id).await,
-        Message::SetTime { time } => server_handle.set_time(conn_id, time).await,
+        Message::StartTimer => server_handle.start_counter().await,
+        Message::StopTimer => server_handle.stop_counter().await,
+        Message::SetTime { time } => server_handle.set_time(time).await,
     }
 }
