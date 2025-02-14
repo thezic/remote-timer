@@ -9,6 +9,8 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+const MAX_TIMER_AGE: Duration = Duration::from_secs(30 * 60); // 30 minutes
+
 type TimerId = Uuid;
 type ConnId = Uuid;
 
@@ -192,9 +194,9 @@ impl TimerServer {
     }
 
     fn cleanup_timers(&mut self) {
-        const MAX_AGE: Duration = Duration::from_secs(10);
-        self.timers_to_cleanup.retain(|&timer_id, created| {
-            if created.elapsed() > MAX_AGE {
+        self.timers_to_cleanup.retain(|&timer_id, created_at| {
+            if created_at.elapsed() > MAX_TIMER_AGE {
+                debug!("Remove timer {timer_id}");
                 if let Some(timer) = self.timers.remove(&timer_id) {
                     _ = timer.close();
                 }
