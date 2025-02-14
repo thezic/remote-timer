@@ -1,8 +1,12 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::interval};
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub enum Command {
@@ -10,20 +14,23 @@ pub enum Command {
     StopCounter,
     SetTime(i32),
     Close,
-    Subscribe(mpsc::UnboundedSender<TimerMessage>),
+    Subscribe(Uuid, mpsc::UnboundedSender<TimerMessage>),
+    Unsubscribe(Uuid),
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct TimerMessage {
     is_running: bool,
     current_time: i32,
+    target_time: i32,
     client_count: usize,
 }
 
 pub struct Timer {
     time: i32,
+    target_time: i32,
     cmd_rx: mpsc::UnboundedReceiver<Command>,
-    listeners: Vec<mpsc::UnboundedSender<TimerMessage>>,
+    listeners: HashMap<Uuid, mpsc::UnboundedSender<TimerMessage>>,
 }
 
 #[derive(Clone)]
@@ -47,10 +54,14 @@ impl TimerHandle {
         Ok(self.cmd_tx.send(Command::Close)?)
     }
 
-    pub fn subscribe(&self) -> Result<mpsc::UnboundedReceiver<TimerMessage>> {
+    pub fn subscribe(&self, client_id: Uuid) -> Result<mpsc::UnboundedReceiver<TimerMessage>> {
         let (tx, rx) = mpsc::unbounded_channel();
-        self.cmd_tx.send(Command::Subscribe(tx))?;
+        self.cmd_tx.send(Command::Subscribe(client_id, tx))?;
         Ok(rx)
+    }
+
+    pub fn unsubscribe(&self, client_id: Uuid) -> Result<()> {
+        Ok(self.cmd_tx.send(Command::Unsubscribe(client_id))?)
     }
 }
 
@@ -59,14 +70,15 @@ impl Timer {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let timer = Self {
             time: 0,
+            target_time: 0,
             cmd_rx,
-            listeners: Vec::new(),
+            listeners: HashMap::new(),
         };
         (timer, TimerHandle { cmd_tx })
     }
 
     fn broadcast(&mut self, msg: TimerMessage) {
-        self.listeners.retain(move |tx| tx.send(msg).is_ok());
+        self.listeners.retain(move |_, tx| tx.send(msg).is_ok());
     }
 
     pub async fn run(mut self) {
@@ -80,8 +92,8 @@ impl Timer {
             tokio::select! {
                 msg = self.cmd_rx.recv() => {
                     match msg {
-                        Some(Command::Subscribe(tx)) => {
-                            self.listeners.push(tx);
+                        Some(Command::Subscribe(client_id, tx)) => {
+                            self.listeners.insert(client_id, tx);
                         },
                         Some(Command::StartCounter) => {
                             is_counting = true;
@@ -91,7 +103,11 @@ impl Timer {
                             is_counting = false;
                         },
                         Some(Command::SetTime(time)) => {
-                            self.time = time;
+                            self.time = 0;
+                            self.target_time = time;
+                        },
+                        Some(Command::Unsubscribe(client_id)) => {
+                            self.listeners.remove(&client_id);
                         },
                         Some(Command::Close) => break,
                         None => break,
@@ -99,18 +115,14 @@ impl Timer {
                 }
 
                 _ = interval.tick(), if is_counting => {
-                    self.time -= last_tick.elapsed().as_millis() as i32;
+                    self.time += last_tick.elapsed().as_millis() as i32;
                     last_tick = Instant::now();
-
-                    if self.time <= 0 {
-                        self.time = 0;
-                        is_counting = false;
-                    }
                 }
             }
             self.broadcast(TimerMessage {
                 is_running: is_counting,
                 current_time: self.time,
+                target_time: self.target_time,
                 client_count: self.listeners.len(),
             });
         }
@@ -125,7 +137,8 @@ mod test {
     async fn test_timer() {
         let (timer, timer_handle) = super::Timer::new();
 
-        let mut msg_rx = timer_handle.subscribe().unwrap();
+        let client_id = uuid::Uuid::new_v4();
+        let mut msg_rx = timer_handle.subscribe(client_id).unwrap();
         tokio::spawn(async move {
             while let Some(msg) = msg_rx.recv().await {
                 println!("Received: {:?}", msg);

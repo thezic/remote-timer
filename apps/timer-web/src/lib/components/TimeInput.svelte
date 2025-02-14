@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { formatTimeFromMs } from '$lib/time';
+	import { formatTimeFromSeconds } from '$lib/time';
 	import type { ChangeEventHandler } from 'svelte/elements';
 
 	type Props = { onchange: (seconds: number) => void; value: number };
@@ -84,7 +84,7 @@
 		type="text"
 		class="block w-36 rounded border px-2 py-1"
 		class:invalid={!isValid}
-		value={formatTimeFromMs(value * 1000)}
+		value={formatTimeFromSeconds(value)}
 	/>
 	<div class="px-2 text-xs text-gray-500">00:10, 25min, 5sec, etc...</div>
 </div>
