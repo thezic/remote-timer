@@ -6,7 +6,7 @@
 	import Button from '$lib/components/Button.svelte';
 	import QrCode from 'svelte-qrcode';
 	import ConnectionStatusBar from '$lib/components/ConnectionStatusBar.svelte';
-	import { formatTimeFromMs } from '$lib/time';
+	import { formatTimeFromSeconds } from '$lib/time';
 
 	let timerId = page.params.timerId;
 	let currentPageUrl = $state('');
@@ -45,7 +45,9 @@
 	<main class="flex-grow">
 		<div class="flex flex-col items-center justify-center px-5 py-10">
 			<div>
-				<div class="py-2 text-4xl font-bold">{service.formattedTime}</div>
+				<div class="py-2 text-4xl font-bold" class:text-red-500={service.remainingSeconds < 0}>
+					{formatTimeFromSeconds(Math.abs(service.remainingSeconds))}
+				</div>
 			</div>
 			<div class="flex grow justify-between">
 				<Button text="Start" onclick={startTimer} disabled={service.isRunning} />
@@ -57,7 +59,7 @@
 						<div><TimeInput value={newTime} onchange={(value) => (newTime = value)} /></div>
 						{#each presetTimes as time}
 							<div>
-								<Button text={formatTimeFromMs(time * 1000)} onclick={() => (newTime = time)} />
+								<Button text={formatTimeFromSeconds(time)} onclick={() => (newTime = time)} />
 							</div>
 						{/each}
 					</div>

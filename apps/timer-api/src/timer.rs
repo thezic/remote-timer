@@ -17,11 +17,13 @@ pub enum Command {
 pub struct TimerMessage {
     is_running: bool,
     current_time: i32,
+    target_time: i32,
     client_count: usize,
 }
 
 pub struct Timer {
     time: i32,
+    target_time: i32,
     cmd_rx: mpsc::UnboundedReceiver<Command>,
     listeners: Vec<mpsc::UnboundedSender<TimerMessage>>,
 }
@@ -59,6 +61,7 @@ impl Timer {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let timer = Self {
             time: 0,
+            target_time: 0,
             cmd_rx,
             listeners: Vec::new(),
         };
@@ -91,7 +94,8 @@ impl Timer {
                             is_counting = false;
                         },
                         Some(Command::SetTime(time)) => {
-                            self.time = time;
+                            self.time = 0;
+                            self.target_time = time;
                         },
                         Some(Command::Close) => break,
                         None => break,
@@ -99,18 +103,14 @@ impl Timer {
                 }
 
                 _ = interval.tick(), if is_counting => {
-                    self.time -= last_tick.elapsed().as_millis() as i32;
+                    self.time += last_tick.elapsed().as_millis() as i32;
                     last_tick = Instant::now();
-
-                    if self.time <= 0 {
-                        self.time = 0;
-                        is_counting = false;
-                    }
                 }
             }
             self.broadcast(TimerMessage {
                 is_running: is_counting,
                 current_time: self.time,
+                target_time: self.target_time,
                 client_count: self.listeners.len(),
             });
         }

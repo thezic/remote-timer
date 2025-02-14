@@ -1,8 +1,13 @@
-import { formatTimeFromMs } from './time';
+import { formatTimeFromSeconds, seconds } from './time';
 import { retry, tryit } from 'radash';
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'closed';
-type Message = { current_time: number; is_running: boolean; client_count: number };
+type Message = {
+	current_time: number;
+	is_running: boolean;
+	client_count: number;
+	target_time: number;
+};
 type Command = { type: 'StartTimer' } | { type: 'StopTimer' } | { type: 'SetTime'; time: number };
 
 class AbortError extends Error {
@@ -32,10 +37,13 @@ async function connectWithRetry(url: string, signal: AbortSignal): Promise<WebSo
 export class TimerService {
 	state: ConnectionState = $state('disconnected');
 	time = $state(0);
+	targetTime = $state(0);
 	isRunning = $state(false);
 	numberOfClients = $state(0);
 
-	formattedTime = $derived(formatTimeFromMs(this.time));
+	timeSeconds = $derived(seconds(this.time));
+	targetSeconds = $derived(seconds(this.targetTime));
+	remainingSeconds = $derived(this.targetSeconds - this.timeSeconds);
 
 	_socket: WebSocket | undefined;
 	_abortController: AbortController | undefined;
@@ -95,6 +103,7 @@ export class TimerService {
 		socket.addEventListener('message', (event) => {
 			const msg = JSON.parse(event.data) as Message;
 			this.time = msg.current_time;
+			this.targetTime = msg.target_time;
 			this.isRunning = msg.is_running;
 			this.numberOfClients = msg.client_count;
 		});
