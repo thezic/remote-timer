@@ -135,19 +135,19 @@ impl TimerServer {
         &mut self,
         timer_id: TimerId,
     ) -> anyhow::Result<(ConnId, mpsc::UnboundedReceiver<timer::TimerMessage>)> {
-        let conn_id = Uuid::new_v4();
+        let client_id = Uuid::new_v4();
 
         let timer_handle = match self.timers.get(&timer_id) {
             Some(handle) => handle.clone(),
             None => self.create_timer(timer_id),
         };
 
-        self.clients.insert(conn_id, timer_id);
+        self.clients.insert(client_id, timer_id);
         self.revive_timer(timer_id);
 
-        let receiver = timer_handle.subscribe()?;
+        let receiver = timer_handle.subscribe(client_id)?;
 
-        Ok((conn_id, receiver))
+        Ok((client_id, receiver))
     }
 
     fn set_time(&mut self, conn_id: ConnId, time: i32) -> Result<()> {
@@ -205,9 +205,18 @@ impl TimerServer {
         });
     }
 
-    async fn disconnect(&mut self, conn_id: ConnId) -> Result<()> {
+    async fn disconnect(&mut self, client_id: ConnId) -> Result<()> {
+        if let Some(timer) = self
+            .clients
+            .get(&client_id)
+            .and_then(|timer_id| self.timers.get(timer_id))
+        {
+            debug!("Unsubscribe from timer {client_id}");
+            timer.unsubscribe(client_id)?;
+        }
+
         // Remove a timer if no clients are connected
-        let timer_to_remove = self.clients.remove(&conn_id).and_then(|timer_id| {
+        let timer_to_remove = self.clients.remove(&client_id).and_then(|timer_id| {
             match self
                 .clients
                 .values()
