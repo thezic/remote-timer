@@ -54,6 +54,7 @@ export class TimerService {
 			return;
 		}
 		this.state = 'connecting';
+		this.numberOfClients = 0;
 
 		if (this._abortController) {
 			this._abortController.abort();

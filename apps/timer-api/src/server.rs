@@ -6,7 +6,7 @@ use std::{
 use crate::timer::{self, Timer, TimerHandle, TimerMessage};
 use anyhow::Result;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 type TimerId = Uuid;
