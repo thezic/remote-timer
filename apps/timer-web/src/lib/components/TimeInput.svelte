@@ -77,16 +77,15 @@
 	};
 </script>
 
-<div class="inline-block">
+<div class="w-full">
 	<input
 		onfocus={(e) => e.currentTarget.select()}
 		onchange={handleChange}
 		type="text"
-		class="block w-36 rounded border px-2 py-1"
+		class="box-border block h-10 w-full rounded border px-2 py-1"
 		class:invalid={!isValid}
 		value={formatTimeFromSeconds(value)}
 	/>
-	<div class="px-2 text-xs text-gray-500">00:10, 25min, 5sec, etc...</div>
 </div>
 
 <style lang="postCss">
