@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { formatTimeFromSeconds } from '$lib/time';
+	import { formatHumanTimeFromSeconds } from '$lib/time';
 	import type { ChangeEventHandler } from 'svelte/elements';
 
 	type Props = { onchange: (seconds: number) => void; value: number };
@@ -46,7 +46,6 @@
 			seconds = seconds ?? 0;
 			const value = parseInt(match.groups.value);
 			const multiplier = parseUnit(match.groups.unit);
-			console.log(value, multiplier);
 			seconds += value * multiplier;
 		}
 		return seconds;
@@ -73,7 +72,6 @@
 		} else {
 			isValid = false;
 		}
-		console.log(isValid);
 	};
 </script>
 
@@ -84,7 +82,7 @@
 		type="text"
 		class="box-border block h-10 w-full rounded border px-2 py-1"
 		class:invalid={!isValid}
-		value={formatTimeFromSeconds(value)}
+		value={formatHumanTimeFromSeconds(value)}
 	/>
 </div>
 

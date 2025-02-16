@@ -8,7 +8,7 @@
 	let fullscreenState: 'windowed' | 'fullscreen' = 'windowed';
 
 	const isOvertime = $derived(service.remainingSeconds < 0);
-	const displayTime = $derived(formatTimeFromSeconds(Math.abs(service.remainingSeconds)));
+	const displayTime = $derived(formatTimeFromSeconds(Math.abs(service.remainingSeconds), false));
 
 	function toggleFullscreen() {
 		if (fullscreenState === 'windowed') {
