@@ -4,10 +4,10 @@
 	import { getContext, onMount } from 'svelte';
 	import { TimerService } from '$lib/timerService.svelte';
 	import { Icon } from '@steeze-ui/svelte-icon';
-	import { QrCode as QrCodeIcon, Tv, QuestionMarkCircle, Play, Stop } from '@steeze-ui/heroicons';
+	import { QrCode as QrCodeIcon, Tv, Play, Stop } from '@steeze-ui/heroicons';
 	import QrCode from 'svelte-qrcode';
 	import ConnectionStatus from '$lib/components/ConnectionStatusBar.svelte';
-	import { formatHumanTimeFromSeconds, formatTimeFromSeconds } from '$lib/time';
+	import { formatTimeFromSeconds } from '$lib/time';
 	import Box from '$lib/components/Box.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import { PresetTimes } from '$lib/presets.svelte';
@@ -59,8 +59,9 @@
 </script>
 
 {#snippet quickButton(seconds: number)}
-	<button class="rounded-md border border-gray-300 px-3" onclick={() => useQuickTime(seconds)}
-		>{Math.round(seconds / 60)}min</button
+	<button
+		class="rounded-md border border-gray-200 px-3 transition-colors hover:bg-gray-50 active:bg-gray-50"
+		onclick={() => useQuickTime(seconds)}>{Math.round(seconds / 60)}min</button
 	>
 {/snippet}
 
@@ -78,7 +79,7 @@
 					{formatTimeFromSeconds(Math.abs(service.remainingSeconds))}
 				</div>
 				<button
-					class="rounded-full border-2 border-red-600 p-5 shadow-md"
+					class="rounded-full border-2 border-red-400 p-5 shadow-md transition-colors hover:bg-red-50"
 					class:rounded-full={!service.isRunning}
 					class:rounded-xl={service.isRunning}
 					onclick={toggleTimer}
@@ -103,25 +104,30 @@
 				<div class="flex-grow">
 					<TimeInput value={newTime} onchange={(value) => (newTime = value)} />
 				</div>
-				<button class="h-10 w-10 rounded-md border border-gray-300" type="submit"
-					><Icon class="h-9 w-9" src={Play} theme="solid" /></button
+				<button
+					class="h-10 w-10 rounded-md border border-gray-300 transition-colors hover:bg-gray-50 active:bg-gray-50"
+					type="submit"><Icon class="h-9 w-9" src={Play} theme="solid" /></button
 				>
 			</form>
 			<div class="mt-8 flex flex-row justify-between pb-2">
 				<ul class="flex space-x-4">
 					<li>
-						<button class="block p-2" onclick={() => (showQrCode = true)}
+						<button
+							class="block rounded-md p-2 transition-colors hover:bg-gray-50 active:bg-gray-50"
+							onclick={() => (showQrCode = true)}
 							><Icon class="h-9 w-9" theme="solid" src={QrCodeIcon} /></button
 						>
 					</li>
 					<li>
-						<a href={displayUrl} class="block p-2"
+						<a
+							href={displayUrl}
+							class="rounde-md block p-2 transition-colors hover:bg-gray-50 active:bg-gray-50"
 							><Icon class="h-9 w-9" theme="solid" src={Tv} /></a
 						>
 					</li>
 				</ul>
 				<div>
-					<!--<button><Icon class="h-9 w-9" theme="solid" src={QuestionMarkCircle} /></button>-->
+					<!-- Placeholder for right side -->
 				</div>
 			</div>
 		{/snippet}
