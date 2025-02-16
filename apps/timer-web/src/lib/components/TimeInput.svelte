@@ -31,12 +31,12 @@
 			case 's':
 				return 1;
 			default:
-				return 0;
+				return 60;
 		}
 	}
 
 	function parseNaturalTime(timeString: string): number | undefined {
-		const matches = timeString.matchAll(/(?<value>\d+)(?<unit>(hours|hour|h|min|m|sec|s)+)/g);
+		const matches = timeString.matchAll(/(?<value>\d+)(?<unit>(hours|hour|h|min|m|sec|s)?)/g);
 		let seconds: number | undefined = undefined;
 		for (const match of matches) {
 			if (!match.groups) {
