@@ -58,10 +58,10 @@ async function getAllHistoryItems(): Promise<HistoryItem[]> {
 
 		const request = store.openCursor();
 		request.onerror = (ev) => {
-			reject(ev.target?.error);
+			reject((ev.target as IDBRequest<IDBCursorWithValue | null>).error);
 		};
 		request.onsuccess = (ev) => {
-			const cursor = ev.target.result;
+			const cursor = (ev.target as IDBRequest<IDBCursorWithValue | null>).result;
 			if (cursor) {
 				items.push(cursor.value);
 				cursor.continue();
