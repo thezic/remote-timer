@@ -10,17 +10,20 @@
 	import { formatTimeFromSeconds } from '$lib/time';
 	import Box from '$lib/components/Box.svelte';
 	import Modal from '$lib/components/Modal.svelte';
+	import { PresetTimes } from '$lib/presets.svelte';
 
 	let timerId = page.params.timerId;
 	let currentPageUrl = $state('');
 	let displayUrl = $derived(currentPageUrl + '/display');
 
 	const service = getContext('service') as TimerService;
+	const presetTimes = new PresetTimes();
 
 	let showQrCode = $state(false);
 
 	onMount(() => {
 		currentPageUrl = window.location.href;
+		presetTimes.load();
 	});
 
 	function startTimer() {
@@ -42,6 +45,7 @@
 	let newTime = $state(900);
 	function setTime(e?: Event) {
 		e?.preventDefault();
+		presetTimes.add(newTime);
 		service.setTime(newTime);
 	}
 
@@ -49,8 +53,6 @@
 		newTime = seconds;
 		setTime();
 	}
-
-	const presetTimes = [30 * 60, 15 * 60, 10 * 60, 5 * 60, 3 * 60, 1 * 60];
 </script>
 
 {#snippet quickButton(seconds: number)}
@@ -59,7 +61,7 @@
 	>
 {/snippet}
 
-<div class="h-dvh px-4">
+<div class="mx-auto h-dvh max-w-2xl px-4 shadow-inner sm:rounded-lg">
 	<Box>
 		{#snippet header()}
 			<hbox class="items-center justify-between pt-2">
@@ -83,7 +85,7 @@
 		{/snippet}
 
 		<div class="mt-8 grid grid-cols-3 gap-4">
-			{#each presetTimes as time}
+			{#each presetTimes.times as time}
 				{@render quickButton(time)}
 			{/each}
 		</div>
