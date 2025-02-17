@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { formatTimeFromSeconds } from '$lib/time';
+	import { formatHumanTimeFromSeconds } from '$lib/time';
 	import type { ChangeEventHandler } from 'svelte/elements';
 
 	type Props = { onchange: (seconds: number) => void; value: number };
@@ -31,12 +31,12 @@
 			case 's':
 				return 1;
 			default:
-				return 0;
+				return 60;
 		}
 	}
 
 	function parseNaturalTime(timeString: string): number | undefined {
-		const matches = timeString.matchAll(/(?<value>\d+)(?<unit>(hours|hour|h|min|m|sec|s)+)/g);
+		const matches = timeString.matchAll(/(?<value>\d+)(?<unit>(hours|hour|h|min|m|sec|s)?)/g);
 		let seconds: number | undefined = undefined;
 		for (const match of matches) {
 			if (!match.groups) {
@@ -46,7 +46,6 @@
 			seconds = seconds ?? 0;
 			const value = parseInt(match.groups.value);
 			const multiplier = parseUnit(match.groups.unit);
-			console.log(value, multiplier);
 			seconds += value * multiplier;
 		}
 		return seconds;
@@ -73,20 +72,18 @@
 		} else {
 			isValid = false;
 		}
-		console.log(isValid);
 	};
 </script>
 
-<div class="inline-block">
+<div class="w-full">
 	<input
 		onfocus={(e) => e.currentTarget.select()}
 		onchange={handleChange}
 		type="text"
-		class="block w-36 rounded border px-2 py-1"
+		class="box-border block h-10 w-full rounded border px-2 py-1"
 		class:invalid={!isValid}
-		value={formatTimeFromSeconds(value)}
+		value={formatHumanTimeFromSeconds(value)}
 	/>
-	<div class="px-2 text-xs text-gray-500">00:10, 25min, 5sec, etc...</div>
 </div>
 
 <style lang="postCss">
