@@ -4,7 +4,7 @@
 	import { getContext, onMount } from 'svelte';
 	import { TimerService } from '$lib/timerService.svelte';
 	import { Icon } from '@steeze-ui/svelte-icon';
-	import { QrCode as QrCodeIcon, Tv, Play, Stop } from '@steeze-ui/heroicons';
+	import { QrCode as QrCodeIcon, Tv, Play, Stop, Square2Stack } from '@steeze-ui/heroicons';
 	import QrCode from 'svelte-qrcode';
 	import ConnectionStatus from '$lib/components/ConnectionStatusBar.svelte';
 	import { formatTimeFromSeconds } from '$lib/time';
@@ -75,13 +75,16 @@
 				</div>
 			</div>
 			<div class="flex flex-col items-center justify-center">
-				<div class="mb-2 py-2 text-6xl font-bold" class:text-red-500={service.remainingSeconds < 0}>
+				<div
+					class={['mb-2 py-2 text-6xl font-bold', service.remainingSeconds < 0 && 'text-red-500']}
+				>
 					{formatTimeFromSeconds(Math.abs(service.remainingSeconds))}
 				</div>
 				<button
-					class="rounded-full border-2 border-red-400 p-5 shadow-md transition-colors hover:bg-red-50"
-					class:rounded-full={!service.isRunning}
-					class:rounded-xl={service.isRunning}
+					class={[
+						'rounded-full border-2 border-red-400 p-5 shadow-md transition-colors hover:bg-red-50',
+						service.isRunning ? 'rounded-xl' : 'rounded-full'
+					]}
 					onclick={toggleTimer}
 				>
 					{#if service.isRunning}
@@ -137,7 +140,15 @@
 <Modal open={showQrCode} onClose={() => (showQrCode = false)}>
 	<div class="flex flex-col content-center items-center">
 		<QrCode value={currentPageUrl} size="400" />
-		<div><a href={displayUrl} class="underline">{timerId}</a></div>
+		<div class="flex content-center space-x-2">
+			<a href={displayUrl} class="divide-x-4 text-gray-500 underline hover:text-gray-800"
+				>{timerId}</a
+			><button
+				class="opacity-50 hover:opacity-100"
+				onclick={() => navigator.clipboard.writeText(displayUrl)}
+				><Icon src={Square2Stack} class="h-4 w-4" theme="solid" /></button
+			>
+		</div>
 	</div>
 </Modal>
 
