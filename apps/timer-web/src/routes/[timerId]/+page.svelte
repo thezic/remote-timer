@@ -4,13 +4,23 @@
 	import { getContext, onMount } from 'svelte';
 	import { TimerService } from '$lib/timerService.svelte';
 	import { Icon } from '@steeze-ui/svelte-icon';
-	import { QrCode as QrCodeIcon, Tv, Play, Stop, Square2Stack } from '@steeze-ui/heroicons';
+	import {
+		QrCode as QrCodeIcon,
+		Tv,
+		Play,
+		Stop,
+		Square2Stack,
+		Trash,
+		Pencil
+	} from '@steeze-ui/heroicons';
 	import QrCode from 'svelte-qrcode';
 	import ConnectionStatus from '$lib/components/ConnectionStatusBar.svelte';
 	import { formatTimeFromSeconds } from '$lib/time';
 	import Box from '$lib/components/Box.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import { PresetTimes } from '$lib/presets.svelte';
+	import { flip } from 'svelte/animate';
+	import { fly } from 'svelte/transition';
 
 	let timerId = page.params.timerId;
 	let currentPageUrl = $state('');
@@ -56,13 +66,23 @@
 		newTime = seconds;
 		setTime();
 	}
+
+	let isEditingPresets = $state(false);
 </script>
 
-{#snippet quickButton(seconds: number)}
+{#snippet quickButton(seconds: number, edit: boolean = false)}
 	<button
-		class="rounded-md border border-gray-200 px-3 transition-colors hover:bg-gray-50 active:bg-gray-50"
-		onclick={() => useQuickTime(seconds)}>{Math.round(seconds / 60)}min</button
-	>
+		class="group relative block flex-grow rounded-md border border-gray-200 bg-white px-3 transition-colors hover:bg-gray-50 active:bg-gray-50"
+		onclick={() => (edit ? presetTimes.remove(seconds) : useQuickTime(seconds))}
+		>{Math.round(seconds / 60)}min
+		{#if edit}
+			<Icon
+				src={Trash}
+				class="absolute right-1 top-1 h-4 w-4 text-red-500 opacity-70 group-hover:opacity-100"
+				theme="solid"
+			/>
+		{/if}
+	</button>
 {/snippet}
 
 <div class="mx-auto h-dvh max-w-2xl px-4 shadow-inner sm:rounded-lg">
@@ -96,9 +116,20 @@
 			</div>
 		{/snippet}
 
-		<div class="mt-8 grid grid-cols-3 gap-4">
-			{#each presetTimes.times as time}
-				{@render quickButton(time)}
+		<div class="my-2 flex justify-end">
+			<button
+				onclick={() => (isEditingPresets = !isEditingPresets)}
+				class={[
+					'rounded-md p-2 text-gray-400 hover:text-gray-800',
+					isEditingPresets && 'bg-gray-50 text-gray-800'
+				]}><Icon src={Pencil} class="h-4 w-4" theme="solid" /></button
+			>
+		</div>
+		<div class="grid grid-cols-3 gap-4">
+			{#each presetTimes.times as time (time)}
+				<div in:fly out:fly animate:flip={{ duration: 500 }} class="flex">
+					{@render quickButton(time, isEditingPresets)}
+				</div>
 			{/each}
 		</div>
 

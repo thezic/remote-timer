@@ -72,6 +72,12 @@ async function getAllHistoryItems(): Promise<HistoryItem[]> {
 	});
 }
 
+async function removeHistoryItem(duration: number) {
+	const db = await getDB();
+	const store = db.transaction('history', 'readwrite').objectStore('history');
+	await deleteItem(store, duration);
+}
+
 function wrapRequest<T>(request: IDBRequest<T>): Promise<T> {
 	return new Promise((resolve, reject) => {
 		request.onsuccess = (ev) => resolve((ev.target as IDBRequest<T>).result);
@@ -84,6 +90,10 @@ function getItem<TData>(
 	keyPath: IDBValidKey | IDBKeyRange
 ): Promise<TData | undefined> {
 	return wrapRequest(store.get(keyPath));
+}
+
+function deleteItem(store: IDBObjectStore, key: IDBValidKey) {
+	return wrapRequest(store.delete(key));
 }
 
 function putItem<T>(store: IDBObjectStore, item: T, key?: IDBValidKey) {
@@ -122,6 +132,10 @@ export class PresetTimes {
 
 	async add(time: number) {
 		await addDuration(time);
+		this._updateHistory();
+	}
+	async remove(time: number) {
+		await removeHistoryItem(time);
 		this._updateHistory();
 	}
 }
