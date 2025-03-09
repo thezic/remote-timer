@@ -98,7 +98,7 @@
 				<div
 					class={['mb-2 py-2 text-6xl font-bold', service.remainingSeconds < 0 && 'text-red-500']}
 				>
-					{formatTimeFromSeconds(Math.abs(service.remainingSeconds))}
+					{formatTimeFromSeconds(service.remainingSeconds)}
 				</div>
 				<button
 					class={[
