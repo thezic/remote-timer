@@ -27,8 +27,10 @@
 	class="flex h-screen items-center justify-center bg-white p-5"
 	onpointerup={toggleFullscreen}
 >
-	<svg viewBox="0 0 70 20" class:overtime={isOvertime}>
-		<text x="1" y="12">
+	<svg viewBox="0 0 80 20" class:overtime={isOvertime}>
+		{#if isOvertime}<path d="M 1 7 H 6" class="minus" />{/if}
+
+		<text x="7" y="12" text-anchor="left">
 			{displayTime}
 		</text>
 	</svg>
@@ -37,6 +39,11 @@
 <style>
 	svg {
 		width: 100%;
+	}
+
+	.minus {
+		stroke-width: 1.2;
+		@apply stroke-red-500;
 	}
 
 	.overtime {
