@@ -1,6 +1,6 @@
 import { seconds } from './time';
 
-export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'closed';
+export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'closed';
 type Message = {
 	current_time: number;
 	is_running: boolean;
@@ -43,6 +43,11 @@ export class TimerService {
 		// Prevent multiple concurrent connections
 		if (this.isConnecting) {
 			return;
+		}
+
+		// If we're already reconnecting, update state to connecting
+		if (this.state === 'reconnecting') {
+			this.state = 'connecting';
 		}
 
 		this.isConnecting = true;
@@ -126,6 +131,7 @@ export class TimerService {
 	private validateConnection() {
 		// If no messages received in 10 seconds, connection likely stale
 		if (Date.now() - this.lastMessageTime > 10000 && this.currentUrl) {
+			this.state = 'reconnecting';
 			this.cleanup();
 			this.connect(this.currentUrl);
 		}
@@ -171,6 +177,9 @@ export class TimerService {
 
 			// Only reconnect if this is still the current socket
 			if (socket === this.socket) {
+				// Immediately show reconnecting state for visual feedback
+				this.state = 'reconnecting';
+
 				// Check retry limits and network status
 				if (this.retryCount >= this.maxRetries) {
 					console.warn('Max reconnection attempts reached');
