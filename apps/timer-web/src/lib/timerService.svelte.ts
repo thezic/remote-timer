@@ -24,6 +24,16 @@ export class TimerService {
 	private reconnectTimeout: number | undefined;
 	private isConnecting = false;
 	private currentUrl: string | undefined;
+	private retryCount = 0;
+	private maxRetries = 8; // Max ~4 minutes of retries
+	private lastMessageTime = 0;
+	private visibilityHandler: (() => void) | undefined;
+	private onlineHandler: (() => void) | undefined;
+
+	constructor() {
+		this.setupNetworkMonitoring();
+		this.setupVisibilityHandling();
+	}
 
 	async connect(url: string): Promise<void> {
 		if (typeof WebSocket === 'undefined') {
@@ -46,6 +56,7 @@ export class TimerService {
 			this.socket = await this.createSocket(url);
 			this.wireSocketEvents(url);
 			this.state = 'connected';
+			this.retryCount = 0; // Reset on successful connection
 		} catch (error) {
 			this.state = 'disconnected';
 			throw error;
@@ -57,6 +68,7 @@ export class TimerService {
 	close() {
 		this.state = 'closed';
 		this.cleanup();
+		this.cleanupEventListeners();
 		this.currentUrl = undefined;
 		this.numberOfClients = 0;
 	}
@@ -71,6 +83,56 @@ export class TimerService {
 			clearTimeout(this.reconnectTimeout);
 			this.reconnectTimeout = undefined;
 		}
+	}
+
+	private cleanupEventListeners() {
+		if (this.visibilityHandler && typeof document !== 'undefined') {
+			document.removeEventListener('visibilitychange', this.visibilityHandler);
+			this.visibilityHandler = undefined;
+		}
+		
+		if (this.onlineHandler && typeof window !== 'undefined') {
+			window.removeEventListener('online', this.onlineHandler);
+			this.onlineHandler = undefined;
+		}
+	}
+
+	private setupNetworkMonitoring() {
+		if (typeof window !== 'undefined' && 'navigator' in window && 'onLine' in navigator) {
+			this.onlineHandler = () => this.handleNetworkOnline();
+			window.addEventListener('online', this.onlineHandler);
+		}
+	}
+
+	private setupVisibilityHandling() {
+		if (typeof document !== 'undefined') {
+			this.visibilityHandler = () => {
+				if (document.visibilityState === 'visible' && this.state === 'connected') {
+					this.validateConnection();
+				}
+			};
+			document.addEventListener('visibilitychange', this.visibilityHandler);
+		}
+	}
+
+	private handleNetworkOnline() {
+		if (this.state === 'disconnected' && this.currentUrl) {
+			// Reset retry count when network comes back online
+			this.retryCount = 0;
+			this.connect(this.currentUrl);
+		}
+	}
+
+	private validateConnection() {
+		// If no messages received in 10 seconds, connection likely stale
+		if (Date.now() - this.lastMessageTime > 10000 && this.currentUrl) {
+			this.cleanup();
+			this.connect(this.currentUrl);
+		}
+	}
+
+	private getRetryDelay(): number {
+		return Math.min(1000 * Math.pow(2, this.retryCount), 30000);
 	}
 
 	private createSocket(url: string): Promise<WebSocket> {
@@ -109,9 +171,25 @@ export class TimerService {
 
 			// Only reconnect if this is still the current socket
 			if (socket === this.socket) {
+				// Check retry limits and network status
+				if (this.retryCount >= this.maxRetries) {
+					console.warn('Max reconnection attempts reached');
+					this.state = 'disconnected';
+					return;
+				}
+
+				// Don't retry if offline
+				if (typeof navigator !== 'undefined' && 'onLine' in navigator && !navigator.onLine) {
+					this.state = 'disconnected';
+					return;
+				}
+
+				this.retryCount++;
+				const delay = this.getRetryDelay();
+				
 				this.reconnectTimeout = setTimeout(() => {
 					this.connect(this.currentUrl!);
-				}, 1000);
+				}, delay);
 			}
 		};
 
@@ -127,6 +205,7 @@ export class TimerService {
 				this.targetTime = msg.target_time;
 				this.isRunning = msg.is_running;
 				this.numberOfClients = msg.client_count;
+				this.lastMessageTime = Date.now();
 			} catch (error) {
 				console.error('Failed to parse WebSocket message:', error);
 			}
