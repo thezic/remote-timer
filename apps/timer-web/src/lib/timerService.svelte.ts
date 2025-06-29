@@ -43,6 +43,12 @@ export class TimerService {
 			return;
 		}
 
+		// Don't attempt connection if offline
+		if (typeof navigator !== 'undefined' && 'onLine' in navigator && !navigator.onLine) {
+			this.state = 'disconnected';
+			return;
+		}
+
 		// Prevent multiple concurrent connections
 		if (this.isConnecting) {
 			return;
@@ -100,28 +106,38 @@ export class TimerService {
 
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('online', this.onlineHandler);
+			window.removeEventListener('offline', this.offlineHandler);
 		}
 	}
 
 	private setupNetworkMonitoring() {
 		if (typeof window !== 'undefined' && 'navigator' in window && 'onLine' in navigator) {
 			window.addEventListener('online', this.onlineHandler);
+			window.addEventListener('offline', this.offlineHandler);
 		}
 	}
 
-	private onlineHandler() {
+	private onlineHandler = () => {
 		if (this.state === 'disconnected' && this.currentUrl) {
 			// Reset retry count when network comes back online
 			this.retryCount = 0;
 			this.connect(this.currentUrl);
 		}
-	}
+	};
 
-	private visibilityHandler() {
+	private offlineHandler = () => {
+		// Immediately show disconnected state when network goes offline
+		if (this.state !== 'closed') {
+			this.state = 'disconnected';
+			this.cleanup();
+		}
+	};
+
+	private visibilityHandler = () => {
 		if (document.visibilityState === 'visible' && this.state === 'connected') {
 			this.validateConnection();
 		}
-	}
+	};
 
 	private setupVisibilityHandling() {
 		if (typeof document !== 'undefined') {
