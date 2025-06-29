@@ -32,8 +32,8 @@ export class TimerService {
 	private retryCount = 0;
 	private maxRetries = 8; // Max ~4 minutes of retries
 	private lastMessageTime = 0;
-	private visibilityHandler: (() => void) | undefined;
-	private onlineHandler: (() => void) | undefined;
+	private visibilityHandler: () => void;
+	private onlineHandler: () => void;
 
 	constructor() {
 		this.setupNetworkMonitoring();
@@ -96,42 +96,41 @@ export class TimerService {
 	}
 
 	private cleanupEventListeners() {
-		if (this.visibilityHandler && typeof document !== 'undefined') {
+		if (typeof document !== 'undefined') {
 			document.removeEventListener('visibilitychange', this.visibilityHandler);
-			this.visibilityHandler = undefined;
 		}
 
-		if (this.onlineHandler && typeof window !== 'undefined') {
+		if (typeof window !== 'undefined') {
 			window.removeEventListener('online', this.onlineHandler);
-			this.onlineHandler = undefined;
 		}
 	}
 
 	private setupNetworkMonitoring() {
+		this.onlineHandler = () => {
+			if (this.state === 'disconnected' && this.currentUrl) {
+				// Reset retry count when network comes back online
+				this.retryCount = 0;
+				this.connect(this.currentUrl);
+			}
+		};
+		
 		if (typeof window !== 'undefined' && 'navigator' in window && 'onLine' in navigator) {
-			this.onlineHandler = () => this.handleNetworkOnline();
 			window.addEventListener('online', this.onlineHandler);
 		}
 	}
 
 	private setupVisibilityHandling() {
+		this.visibilityHandler = () => {
+			if (document.visibilityState === 'visible' && this.state === 'connected') {
+				this.validateConnection();
+			}
+		};
+		
 		if (typeof document !== 'undefined') {
-			this.visibilityHandler = () => {
-				if (document.visibilityState === 'visible' && this.state === 'connected') {
-					this.validateConnection();
-				}
-			};
 			document.addEventListener('visibilitychange', this.visibilityHandler);
 		}
 	}
 
-	private handleNetworkOnline() {
-		if (this.state === 'disconnected' && this.currentUrl) {
-			// Reset retry count when network comes back online
-			this.retryCount = 0;
-			this.connect(this.currentUrl);
-		}
-	}
 
 	private validateConnection() {
 		// If no messages received in 10 seconds, connection likely stale
