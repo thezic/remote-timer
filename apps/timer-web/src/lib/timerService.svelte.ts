@@ -32,8 +32,6 @@ export class TimerService {
 	private retryCount = 0;
 	private maxRetries = 8; // Max ~4 minutes of retries
 	private lastMessageTime = 0;
-	private visibilityHandler: () => void;
-	private onlineHandler: () => void;
 
 	constructor() {
 		this.setupNetworkMonitoring();
@@ -106,31 +104,30 @@ export class TimerService {
 	}
 
 	private setupNetworkMonitoring() {
-		this.onlineHandler = () => {
-			if (this.state === 'disconnected' && this.currentUrl) {
-				// Reset retry count when network comes back online
-				this.retryCount = 0;
-				this.connect(this.currentUrl);
-			}
-		};
-		
 		if (typeof window !== 'undefined' && 'navigator' in window && 'onLine' in navigator) {
 			window.addEventListener('online', this.onlineHandler);
 		}
 	}
 
+	private onlineHandler() {
+		if (this.state === 'disconnected' && this.currentUrl) {
+			// Reset retry count when network comes back online
+			this.retryCount = 0;
+			this.connect(this.currentUrl);
+		}
+	}
+
+	private visibilityHandler() {
+		if (document.visibilityState === 'visible' && this.state === 'connected') {
+			this.validateConnection();
+		}
+	}
+
 	private setupVisibilityHandling() {
-		this.visibilityHandler = () => {
-			if (document.visibilityState === 'visible' && this.state === 'connected') {
-				this.validateConnection();
-			}
-		};
-		
 		if (typeof document !== 'undefined') {
 			document.addEventListener('visibilitychange', this.visibilityHandler);
 		}
 	}
-
 
 	private validateConnection() {
 		// If no messages received in 10 seconds, connection likely stale
@@ -219,11 +216,11 @@ export class TimerService {
 				this.isRunning = msg.is_running;
 				this.numberOfClients = msg.client_count;
 				this.lastMessageTime = Date.now();
-			
-			// Initialize lastMessageTime on first message if not set
-			if (this.lastMessageTime === 0) {
-				this.lastMessageTime = Date.now();
-			}
+
+				// Initialize lastMessageTime on first message if not set
+				if (this.lastMessageTime === 0) {
+					this.lastMessageTime = Date.now();
+				}
 			} catch (error) {
 				console.error('Failed to parse WebSocket message:', error);
 			}
@@ -252,4 +249,3 @@ export class TimerService {
 		this.sendMessage({ type: 'SetTime', time: seconds * 1000 });
 	}
 }
-
