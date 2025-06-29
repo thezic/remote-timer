@@ -1,6 +1,11 @@
 import { seconds } from './time';
 
-export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'closed';
+export type ConnectionState =
+	| 'disconnected'
+	| 'connecting'
+	| 'connected'
+	| 'reconnecting'
+	| 'closed';
 type Message = {
 	current_time: number;
 	is_running: boolean;
@@ -52,14 +57,14 @@ export class TimerService {
 
 		this.isConnecting = true;
 		this.currentUrl = url;
-		
+
 		try {
 			this.cleanup();
 			this.state = 'connecting';
 			this.numberOfClients = 0;
 
 			this.socket = await this.createSocket(url);
-			this.wireSocketEvents(url);
+			this.wireSocketEvents();
 			this.state = 'connected';
 			this.retryCount = 0; // Reset on successful connection
 		} catch (error) {
@@ -83,7 +88,7 @@ export class TimerService {
 			this.socket.close();
 			this.socket = undefined;
 		}
-		
+
 		if (this.reconnectTimeout) {
 			clearTimeout(this.reconnectTimeout);
 			this.reconnectTimeout = undefined;
@@ -95,7 +100,7 @@ export class TimerService {
 			document.removeEventListener('visibilitychange', this.visibilityHandler);
 			this.visibilityHandler = undefined;
 		}
-		
+
 		if (this.onlineHandler && typeof window !== 'undefined') {
 			window.removeEventListener('online', this.onlineHandler);
 			this.onlineHandler = undefined;
@@ -165,7 +170,7 @@ export class TimerService {
 		});
 	}
 
-	private wireSocketEvents(url: string) {
+	private wireSocketEvents() {
 		if (!this.socket) return;
 
 		const socket = this.socket;
@@ -195,7 +200,7 @@ export class TimerService {
 
 				this.retryCount++;
 				const delay = this.getRetryDelay();
-				
+
 				this.reconnectTimeout = setTimeout(() => {
 					this.connect(this.currentUrl!);
 				}, delay);
@@ -215,6 +220,11 @@ export class TimerService {
 				this.isRunning = msg.is_running;
 				this.numberOfClients = msg.client_count;
 				this.lastMessageTime = Date.now();
+			
+			// Initialize lastMessageTime on first message if not set
+			if (this.lastMessageTime === 0) {
+				this.lastMessageTime = Date.now();
+			}
 			} catch (error) {
 				console.error('Failed to parse WebSocket message:', error);
 			}
@@ -243,3 +253,4 @@ export class TimerService {
 		this.sendMessage({ type: 'SetTime', time: seconds * 1000 });
 	}
 }
+
