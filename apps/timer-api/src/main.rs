@@ -1,6 +1,5 @@
 use actix_web::{
-    web::{self, ServiceConfig},
-    Error, HttpRequest, HttpResponse, Responder,
+    middleware::Logger, web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
 };
 use timer_api::{handler, server};
 use tokio::task::spawn_local;
@@ -8,6 +7,10 @@ use uuid::Uuid;
 
 async fn index() -> impl Responder {
     actix_web::HttpResponse::Ok().body("Hello world!")
+}
+
+async fn health() -> impl Responder {
+    actix_web::HttpResponse::Ok().body("OK")
 }
 
 async fn ws_handshake(
@@ -29,18 +32,34 @@ async fn ws_handshake(
     Ok(res)
 }
 
-#[shuttle_runtime::main]
-async fn main(
-) -> shuttle_actix_web::ShuttleActixWeb<impl FnOnce(&mut ServiceConfig) + Send + Clone + 'static> {
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    // Initialize tracing
+    tracing_subscriber::fmt::init();
+
     let (timer_server, handle) = server::TimerServer::new();
 
     tokio::spawn(timer_server.run());
 
-    let config = move |cfg: &mut ServiceConfig| {
-        cfg.app_data(web::Data::new(handle.clone()))
-            .service(web::resource("/").to(index))
-            .service(web::resource("/ws/{id}").to(ws_handshake));
-    };
+    // Get port from environment variable or default to 8080
+    let port = std::env::var("PORT")
+        .unwrap_or_else(|_| "8080".to_string())
+        .parse::<u16>()
+        .expect("PORT must be a valid u16");
 
-    Ok(config.into())
+    let bind_address = format!("0.0.0.0:{}", port);
+
+    tracing::info!("Starting server on {}", bind_address);
+
+    HttpServer::new(move || {
+        App::new()
+            .wrap(Logger::default())
+            .app_data(web::Data::new(handle.clone()))
+            .service(web::resource("/").to(index))
+            .service(web::resource("/health").to(health))
+            .service(web::resource("/ws/{id}").to(ws_handshake))
+    })
+    .bind(&bind_address)?
+    .run()
+    .await
 }
