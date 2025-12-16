@@ -9,7 +9,7 @@ use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 use crate::config::TimerConfig;
-use crate::time::TimeSource;
+use crate::time::{SystemTime, TimeSource};
 
 #[derive(Debug)]
 pub enum Command {
@@ -67,6 +67,21 @@ impl TimerHandle {
 
     pub fn unsubscribe(&self, client_id: Uuid) -> Result<()> {
         Ok(self.cmd_tx.send(Command::Unsubscribe(client_id))?)
+    }
+}
+
+pub trait TimerFactory: Clone + Send + 'static {
+    fn create_timer(&self, config: TimerConfig) -> TimerHandle;
+}
+
+#[derive(Clone)]
+pub struct RealTimerFactory;
+
+impl TimerFactory for RealTimerFactory {
+    fn create_timer(&self, config: TimerConfig) -> TimerHandle {
+        let (timer, handle) = Timer::new(SystemTime, config);
+        tokio::spawn(timer.run());
+        handle
     }
 }
 
@@ -138,11 +153,13 @@ impl<T: TimeSource> Timer<T> {
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
     use tokio::time::{sleep, Duration};
     use tokio::sync::mpsc;
     use crate::time::SystemTime;
     use crate::config::TimerConfig;
+    use std::sync::{Arc, Mutex};
+    use super::{TimerFactory, TimerHandle};
 
     #[tokio::test]
     async fn test_timer() {
@@ -332,5 +349,36 @@ mod test {
         assert!(result.is_err(), "Unsubscribed client should not receive new messages after unsubscribe");
 
         timer_handle.close().unwrap();
+    }
+
+    #[derive(Clone)]
+    pub struct MockTimerFactory {
+        created_timers: Arc<Mutex<Vec<TimerHandle>>>,
+    }
+
+    impl MockTimerFactory {
+        pub fn new() -> Self {
+            Self {
+                created_timers: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        pub fn created_count(&self) -> usize {
+            self.created_timers.lock().unwrap().len()
+        }
+
+        pub fn get_timer(&self, index: usize) -> Option<TimerHandle> {
+            self.created_timers.lock().unwrap().get(index).cloned()
+        }
+    }
+
+    impl TimerFactory for MockTimerFactory {
+        fn create_timer(&self, config: TimerConfig) -> TimerHandle {
+            use crate::time::mock::MockTime;
+            let (timer, handle) = super::Timer::new(MockTime::new(), config);
+            self.created_timers.lock().unwrap().push(handle.clone());
+            tokio::spawn(timer.run());
+            handle
+        }
     }
 }
