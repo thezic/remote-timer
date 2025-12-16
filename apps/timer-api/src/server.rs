@@ -3,6 +3,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::config::TimerConfig;
+use crate::time::SystemTime;
 use crate::timer::{self, Timer, TimerHandle, TimerMessage};
 use anyhow::Result;
 use tokio::sync::{mpsc, oneshot};
@@ -125,7 +127,7 @@ impl TimerServer {
     }
 
     fn create_timer(&mut self, id: TimerId) -> TimerHandle {
-        let (timer, handle) = Timer::new();
+        let (timer, handle) = Timer::new(SystemTime, TimerConfig::default());
         self.timers.insert(id, handle.clone());
 
         let _task_handle = tokio::spawn(timer.run());

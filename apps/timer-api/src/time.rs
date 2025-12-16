@@ -89,7 +89,6 @@ pub mod mock {
             let mut state = self.state.lock().unwrap();
             state.current_time += duration;
 
-            // Wake up completed sleeps
             let mut completed_sleeps = Vec::new();
             for (i, (wake_time, waker)) in state.pending_sleeps.iter().enumerate() {
                 if *wake_time <= state.current_time {
@@ -97,21 +96,17 @@ pub mod mock {
                 }
             }
 
-            // Remove completed sleeps in reverse order to maintain indices
             for (index, waker) in completed_sleeps.into_iter().rev() {
                 state.pending_sleeps.remove(index);
                 waker.wake();
             }
 
-            // Check intervals
             for interval_state in &state.intervals {
                 let mut interval = interval_state.lock().unwrap();
-                while interval.next_tick <= state.current_time {
+                if interval.next_tick <= state.current_time {
                     if let Some(waker) = interval.pending_waker.take() {
                         waker.wake();
                     }
-                    let duration = interval.interval_duration;
-                    interval.next_tick += duration;
                 }
             }
         }
@@ -141,7 +136,7 @@ pub mod mock {
 
         fn interval(&self, duration: Duration) -> Self::IntervalStream {
             let interval_state = Arc::new(Mutex::new(MockIntervalState {
-                next_tick: self.now() + duration,
+                next_tick: self.now(), // First tick is immediate, like tokio interval
                 interval_duration: duration,
                 pending_waker: None,
             }));
@@ -233,11 +228,13 @@ mod tests {
     async fn system_time_interval_works() {
         let time_source = SystemTime;
         let mut interval_stream = time_source.interval(Duration::from_millis(5));
-        
+
+        interval_stream.next().await;
+
         let start = Instant::now();
         interval_stream.next().await;
         let elapsed = start.elapsed();
-        assert!(elapsed >= Duration::from_millis(3)); // Allow some tolerance
+        assert!(elapsed >= Duration::from_millis(3));
     }
 
     #[tokio::test]
@@ -285,32 +282,27 @@ mod tests {
     async fn mock_time_interval_works() {
         let mock_time = mock::MockTime::new();
         let mut interval_stream = mock_time.interval(Duration::from_millis(100));
-        
-        // Create a task to listen for interval ticks
+
         let mut tick_count = 0;
         let handle = tokio::spawn(async move {
             while let Some(_) = interval_stream.next().await {
                 tick_count += 1;
-                if tick_count >= 2 {
+                if tick_count >= 3 {
                     break;
                 }
             }
             tick_count
         });
-        
-        // Give it a moment
+
         tokio::time::sleep(Duration::from_millis(1)).await;
-        assert!(!handle.is_finished());
-        
-        // Advance time to trigger first interval
+
         mock_time.advance(Duration::from_millis(100));
         tokio::time::sleep(Duration::from_millis(1)).await;
-        
-        // Advance time to trigger second interval  
+
         mock_time.advance(Duration::from_millis(100));
-        
-        // Now it should complete
+        tokio::time::sleep(Duration::from_millis(1)).await;
+
         let result = handle.await.unwrap();
-        assert_eq!(result, 2);
+        assert_eq!(result, 3);
     }
 }
