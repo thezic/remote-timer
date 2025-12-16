@@ -1,12 +1,8 @@
-use std::{
-    pin::pin,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use actix_ws::{CloseCode, CloseReason, MessageStream, Session};
-use futures_util::StreamExt as _;
+use actix_ws::{MessageStream, Session};
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -14,20 +10,27 @@ use uuid::Uuid;
 use anyhow::Result;
 
 use crate::server::{BoundServerHandle, ServerHandle};
+use crate::transport::{Transport, TransportMessage, WebSocketTransport};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn handler(
-    mut session: Session,
+    session: Session,
     stream: MessageStream,
     server_handle: ServerHandle,
     timer_id: Uuid,
 ) {
-    info!("connected");
+    let mut transport = WebSocketTransport::new(session, stream);
+    handler_with_transport(&mut transport, server_handle, timer_id).await
+}
 
-    let mut stream = stream.aggregate_continuations();
-    let mut stream = pin!(stream);
+async fn handler_with_transport<T: Transport>(
+    transport: &mut T,
+    server_handle: ServerHandle,
+    timer_id: Uuid,
+) {
+    info!("connected");
 
     let mut last_heartbeat = Instant::now();
     let mut interval = interval(HEARTBEAT_INTERVAL);
@@ -35,62 +38,65 @@ pub async fn handler(
     let (bound_handle, mut timer_msg) = match server_handle.connect(timer_id).await {
         Ok(stuff) => stuff,
         Err(err) => {
-            let _ = session
-                .close(Some(CloseReason {
-                    code: CloseCode::Error,
-                    description: Some(format!("Failed to connect to timer: {err}")),
-                }))
+            let _ = transport
+                .close(Some(&format!("Failed to connect to timer: {err}")))
                 .await;
             return;
         }
     };
 
-    let reason: Option<CloseReason> = loop {
+    let close_reason: Option<String> = loop {
         let tick = interval.tick();
 
         tokio::select! {
-            msg = stream.next() => {
+            msg = transport.recv() => {
                 debug!("received message: {msg:?}");
                 match msg {
-                    Some(Ok(msg)) => match msg {
-                        actix_ws::AggregatedMessage::Text(text) => {
+                    Ok(Some(msg)) => match msg {
+                        TransportMessage::Text(text) => {
                             if let Err(err) = handle_text_message(&text, &bound_handle).await {
                                 error!("Error: {err}");
                             }
                         },
-                        actix_ws::AggregatedMessage::Binary(_) => warn!("Received unexpected binary message"),
-                        actix_ws::AggregatedMessage::Ping(bytes) => if session.pong(&bytes).await.is_err() {
-                            break Some(CloseCode::Abnormal.into())
+                        TransportMessage::Binary(_) => warn!("Received unexpected binary message"),
+                        TransportMessage::Ping(bytes) => {
+                            if transport.pong(&bytes).await.is_err() {
+                                break Some("Pong failed".to_string());
+                            }
                         },
-                        actix_ws::AggregatedMessage::Pong(_) => last_heartbeat = Instant::now(),
-                        actix_ws::AggregatedMessage::Close(reason) => break reason,
+                        TransportMessage::Pong(_) => last_heartbeat = Instant::now(),
+                        TransportMessage::Close(reason) => break reason,
                     },
-                    Some(Err(err)) => {
+                    Ok(None) => break Some("Connection closed".to_string()),
+                    Err(err) => {
                         error!("Error: {err}");
-                        break Some(CloseReason { code: actix_ws::CloseCode::Error, description: Some(err.to_string()) });
+                        break Some(err.to_string());
                     }
-                    None => break Some(CloseReason { code: actix_ws::CloseCode::Normal, description: None }),
                 }
             },
 
             msg = timer_msg.recv() => {
                 let json = serde_json::to_string(&msg).unwrap();
-                // TODO: Handle error
-                _ = session.text(json).await;
+                if let Err(err) = transport.send_text(&json).await {
+                    error!("Failed to send message: {err}");
+                    break Some("Send failed".to_string());
+                }
             }
 
             _tick = tick => {
                 if Instant::now() - last_heartbeat > CLIENT_TIMEOUT {
-                    break Some(CloseReason { code: actix_ws::CloseCode::Error, description: Some("Client timeout".to_string()) });
+                    break Some("Client timeout".to_string());
                 }
 
-                session.ping(b"").await.unwrap();
+                if transport.ping(b"").await.is_err() {
+                    break Some("Ping failed".to_string());
+                }
             }
         };
     };
 
-    info!("Disconnected: {reason:?}");
-    let _ = session.close(reason).await;
+    info!("Disconnected: {close_reason:?}");
+    let _ = transport.close(close_reason.as_deref()).await;
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -108,5 +114,39 @@ async fn handle_text_message(message: &str, server_handle: &BoundServerHandle) -
         Message::StartTimer => server_handle.start_counter().await,
         Message::StopTimer => server_handle.stop_counter().await,
         Message::SetTime { time } => server_handle.set_time(time).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::mock::MockTransport;
+    use crate::transport::TransportMessage;
+
+    #[tokio::test]
+    async fn test_mock_transport_receives_text() {
+        let mut transport = MockTransport::new();
+
+        transport.queue_message(TransportMessage::Text(r#"{"type":"StartTimer"}"#.to_string()));
+        transport.queue_message(TransportMessage::Close(Some("test done".to_string())));
+
+        let msg1 = transport.recv().await.unwrap();
+        assert!(matches!(msg1, Some(TransportMessage::Text(s)) if s.contains("StartTimer")));
+
+        let msg2 = transport.recv().await.unwrap();
+        assert!(matches!(msg2, Some(TransportMessage::Close(_))));
+    }
+
+    #[tokio::test]
+    async fn test_mock_transport_send_and_receive() {
+        let mut transport = MockTransport::new();
+
+        transport.send_text("hello").await.unwrap();
+        transport.send_text("world").await.unwrap();
+
+        let sent = transport.get_sent_messages();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0], "hello");
+        assert_eq!(sent[1], "world");
     }
 }
