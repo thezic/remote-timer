@@ -80,7 +80,7 @@
 		onfocus={(e) => e.currentTarget.select()}
 		onchange={handleChange}
 		type="text"
-		class="box-border block h-10 w-full rounded border px-2 py-1"
+		class="box-border block h-10 w-full rounded border border-gray-300 px-2 py-1"
 		class:invalid={!isValid}
 		value={formatHumanTimeFromSeconds(value)}
 	/>

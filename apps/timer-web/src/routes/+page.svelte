@@ -44,7 +44,7 @@
 </script>
 
 <div class="flex h-screen items-center justify-center">
-	<div class="overflow-hidden rounded-md border">
+	<div class="overflow-hidden rounded-md border border-gray-300">
 		<h1 class="flex justify-center bg-slate-600 px-2 py-2 text-xl text-white">Remote timer</h1>
 		<div class="px-9 py-2 pt-4"><Button onclick={createTimer} text="Create new timer" /></div>
 		{#if history.history.length > 0}
