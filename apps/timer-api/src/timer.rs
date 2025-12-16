@@ -103,52 +103,59 @@ impl<T: TimeSource> Timer<T> {
         self.listeners.retain(move |_, tx| tx.send(msg).is_ok());
     }
 
+    pub async fn run_single_iteration(
+        &mut self,
+        interval_stream: &mut T::IntervalStream,
+        last_tick: &mut std::time::Instant,
+        is_counting: &mut bool,
+    ) -> bool {
+        tokio::select! {
+            msg = self.cmd_rx.recv() => {
+                match msg {
+                    Some(Command::Subscribe(client_id, tx)) => {
+                        self.listeners.insert(client_id, tx);
+                    },
+                    Some(Command::StartCounter) => {
+                        *is_counting = true;
+                        *last_tick = self.time_source.now();
+                    },
+                    Some(Command::StopCounter) => {
+                        *is_counting = false;
+                    },
+                    Some(Command::SetTime(time)) => {
+                        self.time = 0;
+                        self.target_time = time;
+                    },
+                    Some(Command::Unsubscribe(client_id)) => {
+                        self.listeners.remove(&client_id);
+                    },
+                    Some(Command::Close) => return false,
+                    None => return false,
+                };
+            }
+
+            _ = interval_stream.next(), if *is_counting => {
+                let now = self.time_source.now();
+                let elapsed = now.duration_since(*last_tick);
+                self.time += elapsed.as_millis() as i32;
+                *last_tick = now;
+            }
+        }
+        self.broadcast(TimerMessage {
+            is_running: *is_counting,
+            current_time: self.time,
+            target_time: self.target_time,
+            client_count: self.listeners.len(),
+        });
+        true
+    }
+
     pub async fn run(mut self) {
         let mut interval_stream = self.time_source.interval(self.config.tick_interval);
-
         let mut last_tick = self.time_source.now();
         let mut is_counting = false;
 
-        loop {
-            tokio::select! {
-                msg = self.cmd_rx.recv() => {
-                    match msg {
-                        Some(Command::Subscribe(client_id, tx)) => {
-                            self.listeners.insert(client_id, tx);
-                        },
-                        Some(Command::StartCounter) => {
-                            is_counting = true;
-                            last_tick = self.time_source.now();
-                        },
-                        Some(Command::StopCounter) => {
-                            is_counting = false;
-                        },
-                        Some(Command::SetTime(time)) => {
-                            self.time = 0;
-                            self.target_time = time;
-                        },
-                        Some(Command::Unsubscribe(client_id)) => {
-                            self.listeners.remove(&client_id);
-                        },
-                        Some(Command::Close) => break,
-                        None => break,
-                    };
-                }
-
-                _ = interval_stream.next(), if is_counting => {
-                    let now = self.time_source.now();
-                    let elapsed = now.duration_since(last_tick);
-                    self.time += elapsed.as_millis() as i32;
-                    last_tick = now;
-                }
-            }
-            self.broadcast(TimerMessage {
-                is_running: is_counting,
-                current_time: self.time,
-                target_time: self.target_time,
-                client_count: self.listeners.len(),
-            });
-        }
+        while self.run_single_iteration(&mut interval_stream, &mut last_tick, &mut is_counting).await {}
     }
 }
 
@@ -156,7 +163,7 @@ impl<T: TimeSource> Timer<T> {
 pub mod test {
     use tokio::time::{sleep, Duration};
     use tokio::sync::mpsc;
-    use crate::time::SystemTime;
+    use crate::time::{SystemTime, TimeSource};
     use crate::config::TimerConfig;
     use std::sync::{Arc, Mutex};
     use super::{TimerFactory, TimerHandle};
@@ -349,6 +356,50 @@ pub mod test {
         assert!(result.is_err(), "Unsubscribed client should not receive new messages after unsubscribe");
 
         timer_handle.close().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_timer_single_iteration_processes_command() {
+        use crate::time::mock::MockTime;
+        let mock_time = MockTime::new();
+        let config = TimerConfig::for_testing();
+        let (mut timer, timer_handle) = super::Timer::new(mock_time.clone(), config.clone());
+
+        let client_id = uuid::Uuid::new_v4();
+        let mut msg_rx = timer_handle.subscribe(client_id).unwrap();
+
+        let mut interval_stream = mock_time.interval(config.tick_interval);
+        let mut last_tick = mock_time.now();
+        let mut is_counting = false;
+
+        timer.run_single_iteration(&mut interval_stream, &mut last_tick, &mut is_counting).await;
+
+        let msg = msg_rx.recv().await.unwrap();
+        assert_eq!(msg.client_count, 1);
+
+        timer_handle.set_time(1000).unwrap();
+
+        timer.run_single_iteration(&mut interval_stream, &mut last_tick, &mut is_counting).await;
+
+        let msg = msg_rx.recv().await.unwrap();
+        assert_eq!(msg.target_time, 1000);
+    }
+
+    #[tokio::test]
+    async fn test_timer_single_iteration_stops_on_close() {
+        use crate::time::mock::MockTime;
+        let mock_time = MockTime::new();
+        let config = TimerConfig::for_testing();
+        let (mut timer, timer_handle) = super::Timer::new(mock_time.clone(), config.clone());
+
+        let mut interval_stream = mock_time.interval(config.tick_interval);
+        let mut last_tick = mock_time.now();
+        let mut is_counting = false;
+
+        timer_handle.close().unwrap();
+
+        let continues = timer.run_single_iteration(&mut interval_stream, &mut last_tick, &mut is_counting).await;
+        assert!(!continues, "Timer should stop after close command");
     }
 
     #[derive(Clone)]

@@ -24,6 +24,7 @@ pub enum Command {
     StartCounter(ConnId, oneshot::Sender<Result<()>>),
     StopCounter(ConnId, oneshot::Sender<Result<()>>),
     SetTime(ConnId, i32, oneshot::Sender<Result<()>>),
+    Shutdown,
 }
 
 pub struct TimerServer<F: TimerFactory> {
@@ -110,6 +111,10 @@ impl ServerHandle {
         self.cmd_tx.send(Command::Disconnect(conn_id))?;
         debug!("Disconnevting {conn_id}");
         Ok(())
+    }
+
+    pub fn shutdown(&self) -> Result<()> {
+        Ok(self.cmd_tx.send(Command::Shutdown)?)
     }
 }
 
@@ -246,48 +251,50 @@ impl<F: TimerFactory> TimerServer<F> {
         Ok(())
     }
 
-    pub async fn run(mut self) {
-        while let Some(msg) = self.command_rx.recv().await {
-            match msg {
-                Command::Connect(timer_id, signal) => {
-                    // TODO: Handle error here
-                    let (conn_id, receiver) = self.connect(timer_id).await.unwrap();
+    pub async fn run_single_iteration(&mut self) -> bool {
+        let msg = match self.command_rx.recv().await {
+            Some(msg) => msg,
+            None => return false,
+        };
 
-                    if signal.send((conn_id, receiver)).is_err() {
-                        // TODO: We should probably cleanup this connection
-                        warn!("failed to send connection id");
-                    };
-                }
-                Command::StartCounter(conn_id, signal) => {
-                    // TODO: Handle error here
-                    self.start_counter(conn_id).await.unwrap();
-                    if signal.send(Ok(())).is_err() {
-                        warn!("failed to send start counter response to client {conn_id}");
-                    }
-                }
-                Command::StopCounter(conn_id, signal) => {
-                    // TODO: Handle error here
-                    self.stop_counter(conn_id).await.unwrap();
-                    if signal.send(Ok(())).is_err() {
-                        warn!("failed to send stop counter response to client {conn_id}");
-                    }
-                }
-                Command::SetTime(conn_id, time, signal) => {
-                    // TODO: Handle error here
-                    self.set_time(conn_id, time).unwrap();
-                    if let Err(err) = signal.send(Ok(())) {
-                        warn!("failed to send set time response to {conn_id}: {err:?}");
-                    }
-                }
+        match msg {
+            Command::Connect(timer_id, signal) => {
+                let (conn_id, receiver) = self.connect(timer_id).await.unwrap();
 
-                Command::Disconnect(conn_id) => {
-                    // TODO: Handle error here
-                    self.disconnect(conn_id).await.unwrap();
+                if signal.send((conn_id, receiver)).is_err() {
+                    warn!("failed to send connection id");
+                };
+            }
+            Command::StartCounter(conn_id, signal) => {
+                self.start_counter(conn_id).await.unwrap();
+                if signal.send(Ok(())).is_err() {
+                    warn!("failed to send start counter response to client {conn_id}");
                 }
             }
-
-            self.cleanup_timers();
+            Command::StopCounter(conn_id, signal) => {
+                self.stop_counter(conn_id).await.unwrap();
+                if signal.send(Ok(())).is_err() {
+                    warn!("failed to send stop counter response to client {conn_id}");
+                }
+            }
+            Command::SetTime(conn_id, time, signal) => {
+                self.set_time(conn_id, time).unwrap();
+                if let Err(err) = signal.send(Ok(())) {
+                    warn!("failed to send set time response to {conn_id}: {err:?}");
+                }
+            }
+            Command::Disconnect(conn_id) => {
+                self.disconnect(conn_id).await.unwrap();
+            }
+            Command::Shutdown => return false,
         }
+
+        self.cleanup_timers();
+        true
+    }
+
+    pub async fn run(mut self) {
+        while self.run_single_iteration().await {}
     }
 }
 
@@ -370,5 +377,32 @@ mod tests {
         sleep(Duration::from_millis(10)).await;
 
         while let Ok(_) = msg_rx.try_recv() {}
+    }
+
+    #[tokio::test]
+    async fn test_server_shutdown() {
+        let factory = MockTimerFactory::new();
+        let (mut server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        handle.shutdown().unwrap();
+
+        let continues = server.run_single_iteration().await;
+        assert!(!continues, "Server should stop after shutdown command");
+    }
+
+    #[tokio::test]
+    async fn test_server_single_iteration_processes_connect() {
+        let factory = MockTimerFactory::new();
+        let (mut server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        let timer_id = Uuid::new_v4();
+        tokio::spawn(async move {
+            handle.connect(timer_id).await.unwrap();
+        });
+
+        sleep(Duration::from_millis(5)).await;
+        let continues = server.run_single_iteration().await;
+        assert!(continues, "Server should continue after processing connect");
+        assert_eq!(factory.created_count(), 1, "Should have created one timer");
     }
 }
