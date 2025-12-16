@@ -87,6 +87,8 @@
 </div>
 
 <style lang="postCss">
+	@reference "tailwindcss";
+
 	.invalid {
 		@apply border-red-500;
 	}
