@@ -36,7 +36,9 @@
 	</svg>
 </div>
 
-<style>
+<style lang="postcss">
+	@reference "tailwindcss";
+
 	svg {
 		width: 100%;
 	}

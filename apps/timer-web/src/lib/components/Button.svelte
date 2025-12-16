@@ -14,7 +14,7 @@
 
 <button
 	{disabled}
-	class="rounded border bg-slate-300 px-5 py-1 hover:bg-slate-200 disabled:bg-slate-200 disabled:text-gray-500"
+	class="rounded border border-gray-400 bg-slate-300 px-5 py-1 hover:bg-slate-200 disabled:bg-slate-200 disabled:text-gray-500"
 	{onclick}
 	{type}
 	>{text}
