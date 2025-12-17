@@ -279,7 +279,9 @@ impl<F: TimerFactory> TimerServer<F> {
                     }
                     Err(err) => {
                         error!("failed to start counter for client {conn_id}: {err}");
-                        let _ = signal.send(Err(err));
+                        if signal.send(Err(err)).is_err() {
+                            debug!("Failed to send error response for start_counter, receiver dropped");
+                        }
                     }
                 }
             }
@@ -292,7 +294,9 @@ impl<F: TimerFactory> TimerServer<F> {
                     }
                     Err(err) => {
                         error!("failed to stop counter for client {conn_id}: {err}");
-                        let _ = signal.send(Err(err));
+                        if signal.send(Err(err)).is_err() {
+                            debug!("Failed to send error response for stop_counter, receiver dropped");
+                        }
                     }
                 }
             }
@@ -305,7 +309,9 @@ impl<F: TimerFactory> TimerServer<F> {
                     }
                     Err(err) => {
                         error!("failed to set time for client {conn_id}: {err}");
-                        let _ = signal.send(Err(err));
+                        if signal.send(Err(err)).is_err() {
+                            debug!("Failed to send error response for set_time, receiver dropped");
+                        }
                     }
                 }
             }
@@ -484,8 +490,8 @@ mod tests {
 
         assert_eq!(msg1.target_time, 3000);
         assert_eq!(msg2.target_time, 3000);
-        assert_eq!(msg1.is_running, true);
-        assert_eq!(msg2.is_running, true);
+        assert!(msg1.is_running);
+        assert!(msg2.is_running);
         assert_eq!(msg1.client_count, 2);
         assert_eq!(msg2.client_count, 2);
     }

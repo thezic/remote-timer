@@ -17,13 +17,68 @@ pub enum TransportMessage {
     Close(Option<String>),
 }
 
+/// Abstract interface for bidirectional message transport, typically over WebSockets.
+///
+/// This trait abstracts the underlying transport mechanism (WebSockets, in-memory channels, etc.)
+/// to enable testing without real network connections and to decouple the handler logic from
+/// the transport implementation.
+///
+/// # Implementations
+///
+/// - [`WebSocketTransport`]: Production implementation using actix-ws for real WebSocket connections
+/// - [`mock::MockTransport`]: Test implementation that queues messages in memory
+///
+/// # Usage
+///
+/// Handlers use this trait to send and receive messages without knowing the underlying transport:
+///
+/// ```ignore
+/// async fn handler<T: Transport>(transport: &mut T) {
+///     // Send a message
+///     transport.send_text("{\"status\":\"ok\"}").await?;
+///
+///     // Receive messages in a loop
+///     while let Ok(Some(msg)) = transport.recv().await {
+///         match msg {
+///             TransportMessage::Text(text) => { /* handle */ }
+///             TransportMessage::Close(_) => break,
+///             _ => {}
+///         }
+///     }
+/// }
+/// ```
 #[async_trait(?Send)]
 pub trait Transport {
+    /// Sends a text message over the transport.
+    ///
+    /// Returns an error if the transport is closed or if sending fails.
     async fn send_text(&mut self, message: &str) -> Result<()>;
+
+    /// Receives the next message from the transport.
+    ///
+    /// Returns:
+    /// - `Ok(Some(message))` if a message was received
+    /// - `Ok(None)` if the transport has been cleanly closed
+    /// - `Err(...)` if an error occurred while receiving
     async fn recv(&mut self) -> Result<Option<TransportMessage>>;
+
+    /// Closes the transport connection with an optional reason.
+    ///
+    /// After calling close, further send/recv operations may fail.
     async fn close(&mut self, reason: Option<&str>) -> Result<()>;
+
+    /// Sends a ping control message.
+    ///
+    /// Used for heartbeat/keepalive mechanisms. The peer should respond with a pong.
     async fn ping(&mut self, data: &[u8]) -> Result<()>;
+
+    /// Sends a pong control message in response to a ping.
     async fn pong(&mut self, data: &[u8]) -> Result<()>;
+
+    /// Returns whether the transport is still connected.
+    ///
+    /// Returns `false` if the transport has been explicitly closed or if the connection
+    /// has been lost.
     fn is_connected(&self) -> bool;
 }
 

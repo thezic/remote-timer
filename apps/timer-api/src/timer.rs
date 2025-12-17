@@ -103,6 +103,33 @@ impl<T: TimeSource> Timer<T> {
         self.listeners.retain(move |_, tx| tx.send(msg).is_ok());
     }
 
+    /// Processes a single iteration of the timer's event loop.
+    ///
+    /// This method is primarily exposed for fine-grained testing, allowing tests to control
+    /// the execution of the timer one step at a time rather than running the full async loop.
+    ///
+    /// # Parameters
+    ///
+    /// - `interval_stream`: The interval stream that produces timer ticks
+    /// - `last_tick`: The timestamp of the last tick, updated when the timer is running
+    /// - `is_counting`: Whether the timer is currently counting (running)
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the timer should continue running, `false` if it should stop
+    /// (e.g., when a `Close` command is received or the command channel is closed).
+    ///
+    /// # Example Usage in Tests
+    ///
+    /// ```ignore
+    /// let (timer, handle) = Timer::new(mock_time, config);
+    /// let mut interval = mock_time.interval(config.tick_interval);
+    /// let mut last_tick = mock_time.now();
+    /// let mut is_counting = false;
+    ///
+    /// // Process one iteration
+    /// timer.run_single_iteration(&mut interval, &mut last_tick, &mut is_counting).await;
+    /// ```
     pub async fn run_single_iteration(
         &mut self,
         interval_stream: &mut T::IntervalStream,
@@ -137,7 +164,9 @@ impl<T: TimeSource> Timer<T> {
             _ = interval_stream.next(), if *is_counting => {
                 let now = self.time_source.now();
                 let elapsed = now.duration_since(*last_tick);
-                self.time += elapsed.as_millis() as i32;
+                // Prevent overflow: clamp elapsed time to i32::MAX milliseconds (~24.8 days)
+                let elapsed_ms = elapsed.as_millis().min(i32::MAX as u128) as i32;
+                self.time = self.time.saturating_add(elapsed_ms);
                 *last_tick = now;
             }
         }
@@ -200,7 +229,7 @@ pub mod test {
 
     use crate::time::mock::MockTime;
 
-    async fn get_latest_msg(rx: &mut mpsc::UnboundedReceiver<super::TimerMessage>) -> super::TimerMessage {
+    async fn drain_to_latest_msg(rx: &mut mpsc::UnboundedReceiver<super::TimerMessage>) -> super::TimerMessage {
         let mut msg = rx.recv().await.unwrap();
         while let Ok(new_msg) = rx.try_recv() {
             msg = new_msg;
@@ -267,16 +296,16 @@ pub mod test {
         let mut msg_rx = timer_handle.subscribe(client_id).unwrap();
 
         tokio::time::sleep(Duration::from_millis(10)).await;
-        get_latest_msg(&mut msg_rx).await;
+        drain_to_latest_msg(&mut msg_rx).await;
 
         timer_handle.start_counter().unwrap();
         tokio::time::sleep(Duration::from_millis(10)).await;
-        let msg = get_latest_msg(&mut msg_rx).await;
+        let msg = drain_to_latest_msg(&mut msg_rx).await;
         assert!(msg.is_running, "Timer should be running after start");
 
         timer_handle.stop_counter().unwrap();
         tokio::time::sleep(Duration::from_millis(10)).await;
-        let msg = get_latest_msg(&mut msg_rx).await;
+        let msg = drain_to_latest_msg(&mut msg_rx).await;
         assert!(!msg.is_running, "Timer should be stopped after stop");
 
         timer_handle.close().unwrap();
@@ -294,20 +323,20 @@ pub mod test {
         let mut msg_rx = timer_handle.subscribe(client_id).unwrap();
 
         tokio::time::sleep(Duration::from_millis(10)).await;
-        get_latest_msg(&mut msg_rx).await;
+        drain_to_latest_msg(&mut msg_rx).await;
 
         timer_handle.set_time(1000).unwrap();
         tokio::time::sleep(Duration::from_millis(10)).await;
-        get_latest_msg(&mut msg_rx).await;
+        drain_to_latest_msg(&mut msg_rx).await;
 
         timer_handle.start_counter().unwrap();
         tokio::time::sleep(Duration::from_millis(10)).await;
-        get_latest_msg(&mut msg_rx).await;
+        drain_to_latest_msg(&mut msg_rx).await;
 
         mock_time.advance(Duration::from_millis(100));
         tokio::time::sleep(Duration::from_millis(20)).await;
 
-        let msg = get_latest_msg(&mut msg_rx).await;
+        let msg = drain_to_latest_msg(&mut msg_rx).await;
         assert!(
             msg.current_time >= 90 && msg.current_time <= 110,
             "Expected ~100ms, got {}ms",
@@ -332,8 +361,8 @@ pub mod test {
 
         tokio::time::sleep(Duration::from_millis(20)).await;
 
-        let msg1 = get_latest_msg(&mut msg_rx1).await;
-        let msg2 = get_latest_msg(&mut msg_rx2).await;
+        let msg1 = drain_to_latest_msg(&mut msg_rx1).await;
+        let msg2 = drain_to_latest_msg(&mut msg_rx2).await;
         assert_eq!(msg1.client_count, 2, "First subscriber should see 2 clients");
         assert_eq!(msg2.client_count, 2, "Second subscriber should see 2 clients");
 
@@ -343,7 +372,7 @@ pub mod test {
         timer_handle.set_time(100).unwrap();
         tokio::time::sleep(Duration::from_millis(10)).await;
 
-        let msg2 = get_latest_msg(&mut msg_rx2).await;
+        let msg2 = drain_to_latest_msg(&mut msg_rx2).await;
         assert_eq!(msg2.client_count, 1, "Should only have 1 client after unsubscribe");
 
         tokio::time::sleep(Duration::from_millis(5)).await;

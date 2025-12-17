@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
@@ -9,31 +9,31 @@ use uuid::Uuid;
 
 use anyhow::Result;
 
+use crate::config::HandlerConfig;
 use crate::server::{BoundServerHandle, ServerHandle};
 use crate::transport::{Transport, TransportMessage, WebSocketTransport};
-
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn handler(
     session: Session,
     stream: MessageStream,
     server_handle: ServerHandle,
     timer_id: Uuid,
+    config: HandlerConfig,
 ) {
     let mut transport = WebSocketTransport::new(session, stream);
-    handler_with_transport(&mut transport, server_handle, timer_id).await
+    handler_with_transport(&mut transport, server_handle, timer_id, config).await
 }
 
 async fn handler_with_transport<T: Transport>(
     transport: &mut T,
     server_handle: ServerHandle,
     timer_id: Uuid,
+    config: HandlerConfig,
 ) {
     info!("connected");
 
     let mut last_heartbeat = Instant::now();
-    let mut interval = interval(HEARTBEAT_INTERVAL);
+    let mut interval = interval(config.heartbeat_interval);
 
     let (bound_handle, mut timer_msg) = match server_handle.connect(timer_id).await {
         Ok(stuff) => stuff,
@@ -90,7 +90,7 @@ async fn handler_with_transport<T: Transport>(
             }
 
             _tick = tick => {
-                if Instant::now() - last_heartbeat > CLIENT_TIMEOUT {
+                if Instant::now() - last_heartbeat > config.client_timeout {
                     break Some("Client timeout".to_string());
                 }
 

@@ -23,12 +23,34 @@ impl TimerConfig {
     }
 }
 
-/// Configuration for WebSocket connection handlers.
+/// Configuration for WebSocket connection handlers that manage client connections.
+///
+/// Handlers use a heartbeat mechanism to detect disconnected clients:
+/// - Periodically sends ping messages to clients based on `heartbeat_interval`
+/// - Tracks when pong responses are received from clients
+/// - Disconnects clients that haven't responded within `client_timeout`
+///
+/// # Examples
+///
+/// ```
+/// use std::time::Duration;
+/// use timer_api::config::HandlerConfig;
+///
+/// // Production configuration with 5-second heartbeats
+/// let config = HandlerConfig::default();
+/// assert_eq!(config.heartbeat_interval, Duration::from_secs(5));
+///
+/// // Fast configuration for testing
+/// let test_config = HandlerConfig::for_testing();
+/// assert_eq!(test_config.heartbeat_interval, Duration::from_millis(10));
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct HandlerConfig {
-    /// Interval at which heartbeat pings are sent to clients.
+    /// Interval at which heartbeat ping messages are sent to connected clients.
+    /// Shorter intervals detect disconnections faster but increase network traffic.
     pub heartbeat_interval: Duration,
-    /// Duration after which an unresponsive client is considered timed out.
+    /// Maximum duration without receiving a pong response before considering a client timed out.
+    /// Should be larger than `heartbeat_interval` to allow for network latency.
     pub client_timeout: Duration,
 }
 
@@ -50,11 +72,36 @@ impl HandlerConfig {
     }
 }
 
-/// Configuration for the timer server's cleanup behavior.
+/// Configuration for the timer server's resource management and cleanup behavior.
+///
+/// The server manages multiple timer instances identified by UUIDs. To prevent memory leaks
+/// from abandoned timers (e.g., when all clients disconnect and never reconnect), the server
+/// periodically cleans up old idle timers.
+///
+/// A timer is considered eligible for cleanup when:
+/// - It has no connected clients
+/// - It has existed for longer than `max_timer_age`
+///
+/// # Examples
+///
+/// ```
+/// use std::time::Duration;
+/// use timer_api::config::ServerConfig;
+///
+/// // Production: keep idle timers for 30 minutes
+/// let config = ServerConfig::default();
+/// assert_eq!(config.max_timer_age, Duration::from_secs(30 * 60));
+///
+/// // Testing: cleanup after 100ms for faster tests
+/// let test_config = ServerConfig::for_testing();
+/// assert_eq!(test_config.max_timer_age, Duration::from_millis(100));
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct ServerConfig {
-    /// Maximum age of idle timers before they become eligible for cleanup.
-    /// Timers with no connected clients older than this duration may be removed.
+    /// Maximum age of idle timers (those with no connected clients) before they become
+    /// eligible for cleanup. Longer durations use more memory but allow clients to reconnect
+    /// to existing timers. Shorter durations save memory but require clients to create new
+    /// timers if they reconnect after this duration.
     pub max_timer_age: Duration,
 }
 
