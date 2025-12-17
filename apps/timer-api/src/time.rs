@@ -30,8 +30,10 @@ impl TimeSource for SystemTime {
     }
 
     fn interval(&self, duration: Duration) -> Self::IntervalStream {
+        let mut interval_inner = interval(duration);
+        interval_inner.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         SystemIntervalStream {
-            interval: interval(duration),
+            interval: interval_inner,
         }
     }
 }
@@ -54,7 +56,7 @@ impl Stream for SystemIntervalStream {
 #[cfg(test)]
 pub mod mock {
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, Weak};
     use std::task::Waker;
 
     #[derive(Clone)]
@@ -65,7 +67,7 @@ pub mod mock {
     struct MockTimeState {
         current_time: Instant,
         pending_sleeps: Vec<(Instant, Waker)>,
-        intervals: Vec<Arc<Mutex<MockIntervalState>>>,
+        intervals: Vec<Weak<Mutex<MockIntervalState>>>,
     }
 
     struct MockIntervalState {
@@ -101,14 +103,20 @@ pub mod mock {
                 waker.wake();
             }
 
-            for interval_state in &state.intervals {
-                let mut interval = interval_state.lock().unwrap();
-                if interval.next_tick <= state.current_time {
-                    if let Some(waker) = interval.pending_waker.take() {
-                        waker.wake();
+            let current_time = state.current_time;
+            state.intervals.retain(|weak_interval| {
+                if let Some(interval_state) = weak_interval.upgrade() {
+                    let mut interval = interval_state.lock().unwrap();
+                    if interval.next_tick <= current_time {
+                        if let Some(waker) = interval.pending_waker.take() {
+                            waker.wake();
+                        }
                     }
+                    true
+                } else {
+                    false
                 }
-            }
+            });
         }
 
         pub fn set_time(&self, time: Instant) {
@@ -131,17 +139,18 @@ pub mod mock {
                 time_source: self.clone(),
                 wake_time,
                 completed: false,
+                registered: false,
             }
         }
 
         fn interval(&self, duration: Duration) -> Self::IntervalStream {
             let interval_state = Arc::new(Mutex::new(MockIntervalState {
-                next_tick: self.now(), // First tick is immediate, like tokio interval
+                next_tick: self.now(),
                 interval_duration: duration,
                 pending_waker: None,
             }));
 
-            self.state.lock().unwrap().intervals.push(interval_state.clone());
+            self.state.lock().unwrap().intervals.push(Arc::downgrade(&interval_state));
 
             MockIntervalStream {
                 time_source: self.clone(),
@@ -154,6 +163,7 @@ pub mod mock {
         time_source: MockTime,
         wake_time: Instant,
         completed: bool,
+        registered: bool,
     }
 
     impl Future for MockSleep {
@@ -169,8 +179,11 @@ pub mod mock {
                 self.completed = true;
                 Poll::Ready(())
             } else {
-                self.time_source.state.lock().unwrap()
-                    .pending_sleeps.push((self.wake_time, cx.waker().clone()));
+                if !self.registered {
+                    self.time_source.state.lock().unwrap()
+                        .pending_sleeps.push((self.wake_time, cx.waker().clone()));
+                    self.registered = true;
+                }
                 Poll::Pending
             }
         }
