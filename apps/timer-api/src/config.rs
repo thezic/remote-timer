@@ -1,7 +1,9 @@
 use std::time::Duration;
 
+/// Configuration for the timer's tick behavior.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TimerConfig {
+    /// Interval between timer ticks. Determines how frequently elapsed time is calculated.
     pub tick_interval: Duration,
 }
 
@@ -21,9 +23,12 @@ impl TimerConfig {
     }
 }
 
+/// Configuration for WebSocket connection handlers.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HandlerConfig {
+    /// Interval at which heartbeat pings are sent to clients.
     pub heartbeat_interval: Duration,
+    /// Duration after which an unresponsive client is considered timed out.
     pub client_timeout: Duration,
 }
 
@@ -45,8 +50,11 @@ impl HandlerConfig {
     }
 }
 
+/// Configuration for the timer server's cleanup behavior.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ServerConfig {
+    /// Maximum age of idle timers before they become eligible for cleanup.
+    /// Timers with no connected clients older than this duration may be removed.
     pub max_timer_age: Duration,
 }
 

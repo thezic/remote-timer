@@ -224,7 +224,7 @@ pub mod test {
         let msg = msg_rx.recv().await.unwrap();
         assert_eq!(msg.current_time, 0);
         assert_eq!(msg.target_time, 0);
-        assert_eq!(msg.is_running, false);
+        assert!(!msg.is_running);
         assert_eq!(msg.client_count, 1);
 
         timer_handle.close().unwrap();
@@ -272,12 +272,12 @@ pub mod test {
         timer_handle.start_counter().unwrap();
         tokio::time::sleep(Duration::from_millis(10)).await;
         let msg = get_latest_msg(&mut msg_rx).await;
-        assert_eq!(msg.is_running, true, "Timer should be running after start");
+        assert!(msg.is_running, "Timer should be running after start");
 
         timer_handle.stop_counter().unwrap();
         tokio::time::sleep(Duration::from_millis(10)).await;
         let msg = get_latest_msg(&mut msg_rx).await;
-        assert_eq!(msg.is_running, false, "Timer should be stopped after stop");
+        assert!(!msg.is_running, "Timer should be stopped after stop");
 
         timer_handle.close().unwrap();
     }

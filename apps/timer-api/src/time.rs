@@ -5,12 +5,37 @@ use std::task::{Context, Poll};
 use tokio::time::{interval, sleep, Interval};
 use tokio_stream::Stream;
 
+/// Abstraction for time operations, enabling deterministic testing with mock implementations.
+///
+/// Implementations provide methods for querying current time, sleeping, and creating intervals.
+/// The [`SystemTime`] implementation uses real system time via tokio, while [`mock::MockTime`]
+/// allows tests to control time progression explicitly.
+///
+/// # Examples
+///
+/// ```
+/// use timer_api::time::{TimeSource, SystemTime};
+///
+/// let time = SystemTime;
+/// let now = time.now();
+/// // Returns the current instant
+/// ```
 pub trait TimeSource: Send + Sync + Clone + 'static {
+    /// Stream type that yields `()` at regular intervals.
     type IntervalStream: Stream<Item = ()> + Send + Unpin;
+
+    /// Future type that completes after a specified duration.
     type SleepFuture: Future<Output = ()> + Send;
 
+    /// Returns the current instant in time.
     fn now(&self) -> Instant;
+
+    /// Returns a future that completes after the specified duration.
     fn sleep(&self, duration: Duration) -> Self::SleepFuture;
+
+    /// Creates a stream that yields at regular intervals.
+    ///
+    /// The first tick occurs immediately when the stream is first polled.
     fn interval(&self, duration: Duration) -> Self::IntervalStream;
 }
 

@@ -109,7 +109,7 @@ impl ServerHandle {
 
     pub fn disconnect(&self, conn_id: ConnId) -> Result<()> {
         self.cmd_tx.send(Command::Disconnect(conn_id))?;
-        debug!("Disconnevting {conn_id}");
+        debug!("Disconnecting {conn_id}");
         Ok(())
     }
 

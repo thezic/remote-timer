@@ -2,12 +2,18 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::pin::Pin;
 
+/// Represents different types of messages that can be sent or received over a transport connection.
 #[derive(Debug, Clone)]
 pub enum TransportMessage {
+    /// A text message containing UTF-8 encoded string data.
     Text(String),
+    /// A binary message containing raw byte data.
     Binary(Vec<u8>),
+    /// A ping control frame with optional payload data, used for keep-alive checks.
     Ping(Vec<u8>),
+    /// A pong control frame with optional payload data, sent in response to a ping.
     Pong(Vec<u8>),
+    /// A close control frame indicating connection termination, with optional reason string.
     Close(Option<String>),
 }
 

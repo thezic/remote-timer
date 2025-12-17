@@ -6,6 +6,12 @@ pub mod test_utils {
     
     use crate::config::{HandlerConfig, ServerConfig, TimerConfig};
 
+    /// Returns a tuple of testing configurations for timer, handler, and server.
+    ///
+    /// These configurations use faster intervals suitable for testing:
+    /// - Timer ticks every 1ms (vs 100ms in production)
+    /// - Heartbeats every 10ms (vs 5s in production)
+    /// - Cleanup happens after 100ms (vs 30 minutes in production)
     pub fn fast_configs() -> (TimerConfig, HandlerConfig, ServerConfig) {
         (
             TimerConfig::for_testing(),
@@ -14,10 +20,25 @@ pub mod test_utils {
         )
     }
 
+    /// Creates a pair of unbounded MPSC channels for testing.
+    ///
+    /// Returns a tuple of (sender, receiver) that can be used in tests
+    /// to simulate async message passing between components.
     pub fn create_test_channels<T>() -> (mpsc::UnboundedSender<T>, mpsc::UnboundedReceiver<T>) {
         mpsc::unbounded_channel()
     }
 
+    /// Polls a synchronous condition function until it returns true or times out.
+    ///
+    /// # Arguments
+    /// * `condition` - A mutable closure that returns true when the desired condition is met
+    /// * `timeout_duration` - Maximum duration to wait before timing out
+    ///
+    /// # Returns
+    /// * `Ok(())` if the condition becomes true within the timeout
+    /// * `Err(&'static str)` if the timeout is reached before the condition is met
+    ///
+    /// The condition is polled approximately every 1ms.
     pub async fn wait_for_condition<F>(
         mut condition: F,
         timeout_duration: Duration,
@@ -26,17 +47,28 @@ pub mod test_utils {
         F: FnMut() -> bool,
     {
         let start = Instant::now();
-        
+
         while start.elapsed() < timeout_duration {
             if condition() {
                 return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        
+
         Err("Condition not met within timeout")
     }
 
+    /// Polls an asynchronous condition function until it returns true or times out.
+    ///
+    /// # Arguments
+    /// * `condition` - A mutable closure that returns a Future<Output = bool>
+    /// * `timeout_duration` - Maximum duration to wait before timing out
+    ///
+    /// # Returns
+    /// * `Ok(())` if the condition becomes true within the timeout
+    /// * `Err(&'static str)` if the timeout is reached before the condition is met
+    ///
+    /// Similar to [`wait_for_condition`] but for async conditions. Polls approximately every 1ms.
     pub async fn wait_for_async_condition<F, Fut>(
         mut condition: F,
         timeout_duration: Duration,
@@ -60,6 +92,18 @@ pub mod test_utils {
         }
     }
 
+    /// Asserts that a synchronous operation completes within an expected duration with tolerance.
+    ///
+    /// # Arguments
+    /// * `operation` - A closure containing the operation to time
+    /// * `expected_duration` - The expected duration for the operation to complete
+    /// * `tolerance` - Allowed variance above or below the expected duration
+    ///
+    /// # Panics
+    /// Panics if the operation duration falls outside the range:
+    /// `[expected_duration - tolerance, expected_duration + tolerance]`
+    ///
+    /// Useful for testing timing-sensitive code while accounting for system variance.
     pub fn assert_within_duration<F>(operation: F, expected_duration: Duration, tolerance: Duration)
     where
         F: FnOnce(),
@@ -67,9 +111,9 @@ pub mod test_utils {
         let start = Instant::now();
         operation();
         let elapsed = start.elapsed();
-        
+
         assert!(
-            elapsed >= expected_duration.saturating_sub(tolerance) && 
+            elapsed >= expected_duration.saturating_sub(tolerance) &&
             elapsed <= expected_duration + tolerance,
             "Operation took {:?}, expected {:?} ± {:?}",
             elapsed,
@@ -78,6 +122,18 @@ pub mod test_utils {
         );
     }
 
+    /// Asserts that an asynchronous operation completes within an expected duration with tolerance.
+    ///
+    /// # Arguments
+    /// * `operation` - A closure that returns a Future to time
+    /// * `expected_duration` - The expected duration for the operation to complete
+    /// * `tolerance` - Allowed variance above or below the expected duration
+    ///
+    /// # Panics
+    /// Panics if the operation duration falls outside the range:
+    /// `[expected_duration - tolerance, expected_duration + tolerance]`
+    ///
+    /// Similar to [`assert_within_duration`] but for async operations.
     pub async fn assert_within_duration_async<F, Fut>(
         operation: F,
         expected_duration: Duration,
@@ -90,9 +146,9 @@ pub mod test_utils {
         let start = Instant::now();
         operation().await;
         let elapsed = start.elapsed();
-        
+
         assert!(
-            elapsed >= expected_duration.saturating_sub(tolerance) && 
+            elapsed >= expected_duration.saturating_sub(tolerance) &&
             elapsed <= expected_duration + tolerance,
             "Async operation took {:?}, expected {:?} ± {:?}",
             elapsed,
