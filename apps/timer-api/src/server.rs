@@ -3,10 +3,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::timer::{self, Timer, TimerHandle, TimerMessage};
+use crate::config::TimerConfig;
+use crate::timer::{self, RealTimerFactory, TimerFactory, TimerHandle, TimerMessage};
 use anyhow::Result;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 const MAX_TIMER_AGE: Duration = Duration::from_secs(30 * 60); // 30 minutes
@@ -23,13 +24,16 @@ pub enum Command {
     StartCounter(ConnId, oneshot::Sender<Result<()>>),
     StopCounter(ConnId, oneshot::Sender<Result<()>>),
     SetTime(ConnId, i32, oneshot::Sender<Result<()>>),
+    Shutdown,
 }
 
-pub struct TimerServer {
+pub struct TimerServer<F: TimerFactory> {
     command_rx: mpsc::UnboundedReceiver<Command>,
     timers: HashMap<TimerId, TimerHandle>,
     clients: HashMap<ConnId, TimerId>,
     timers_to_cleanup: HashMap<TimerId, Instant>,
+    factory: F,
+    config: TimerConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -105,13 +109,23 @@ impl ServerHandle {
 
     pub fn disconnect(&self, conn_id: ConnId) -> Result<()> {
         self.cmd_tx.send(Command::Disconnect(conn_id))?;
-        debug!("Disconnevting {conn_id}");
+        debug!("Disconnecting {conn_id}");
         Ok(())
+    }
+
+    pub fn shutdown(&self) -> Result<()> {
+        Ok(self.cmd_tx.send(Command::Shutdown)?)
     }
 }
 
-impl TimerServer {
+impl TimerServer<RealTimerFactory> {
     pub fn new() -> (Self, ServerHandle) {
+        Self::with_factory(RealTimerFactory, TimerConfig::default())
+    }
+}
+
+impl<F: TimerFactory> TimerServer<F> {
+    pub fn with_factory(factory: F, config: TimerConfig) -> (Self, ServerHandle) {
         let (msg_tx, msg_rx) = mpsc::unbounded_channel::<Command>();
 
         let server = TimerServer {
@@ -119,17 +133,16 @@ impl TimerServer {
             command_rx: msg_rx,
             timers: HashMap::new(),
             timers_to_cleanup: HashMap::new(),
+            factory,
+            config,
         };
 
         (server, ServerHandle { cmd_tx: msg_tx })
     }
 
     fn create_timer(&mut self, id: TimerId) -> TimerHandle {
-        let (timer, handle) = Timer::new();
+        let handle = self.factory.create_timer(self.config.clone());
         self.timers.insert(id, handle.clone());
-
-        let _task_handle = tokio::spawn(timer.run());
-
         handle
     }
 
@@ -238,47 +251,332 @@ impl TimerServer {
         Ok(())
     }
 
-    pub async fn run(mut self) {
-        while let Some(msg) = self.command_rx.recv().await {
-            match msg {
-                Command::Connect(timer_id, signal) => {
-                    // TODO: Handle error here
-                    let (conn_id, receiver) = self.connect(timer_id).await.unwrap();
+    pub async fn run_single_iteration(&mut self) -> bool {
+        let msg = match self.command_rx.recv().await {
+            Some(msg) => msg,
+            None => return false,
+        };
 
-                    if signal.send((conn_id, receiver)).is_err() {
-                        // TODO: We should probably cleanup this connection
-                        warn!("failed to send connection id");
-                    };
-                }
-                Command::StartCounter(conn_id, signal) => {
-                    // TODO: Handle error here
-                    self.start_counter(conn_id).await.unwrap();
-                    if signal.send(Ok(())).is_err() {
-                        warn!("failed to send start counter response to client {conn_id}");
+        match msg {
+            Command::Connect(timer_id, signal) => {
+                match self.connect(timer_id).await {
+                    Ok((conn_id, receiver)) => {
+                        if signal.send((conn_id, receiver)).is_err() {
+                            warn!("failed to send connection id for timer {timer_id}");
+                        }
                     }
-                }
-                Command::StopCounter(conn_id, signal) => {
-                    // TODO: Handle error here
-                    self.stop_counter(conn_id).await.unwrap();
-                    if signal.send(Ok(())).is_err() {
-                        warn!("failed to send stop counter response to client {conn_id}");
+                    Err(err) => {
+                        error!("failed to connect to timer {timer_id}: {err}");
                     }
-                }
-                Command::SetTime(conn_id, time, signal) => {
-                    // TODO: Handle error here
-                    self.set_time(conn_id, time).unwrap();
-                    if let Err(err) = signal.send(Ok(())) {
-                        warn!("failed to send set time response to {conn_id}: {err:?}");
-                    }
-                }
-
-                Command::Disconnect(conn_id) => {
-                    // TODO: Handle error here
-                    self.disconnect(conn_id).await.unwrap();
                 }
             }
-
-            self.cleanup_timers();
+            Command::StartCounter(conn_id, signal) => {
+                match self.start_counter(conn_id).await {
+                    Ok(()) => {
+                        if signal.send(Ok(())).is_err() {
+                            warn!("failed to send start counter response to client {conn_id}");
+                        }
+                    }
+                    Err(err) => {
+                        error!("failed to start counter for client {conn_id}: {err}");
+                        if signal.send(Err(err)).is_err() {
+                            debug!("Failed to send error response for start_counter, receiver dropped");
+                        }
+                    }
+                }
+            }
+            Command::StopCounter(conn_id, signal) => {
+                match self.stop_counter(conn_id).await {
+                    Ok(()) => {
+                        if signal.send(Ok(())).is_err() {
+                            warn!("failed to send stop counter response to client {conn_id}");
+                        }
+                    }
+                    Err(err) => {
+                        error!("failed to stop counter for client {conn_id}: {err}");
+                        if signal.send(Err(err)).is_err() {
+                            debug!("Failed to send error response for stop_counter, receiver dropped");
+                        }
+                    }
+                }
+            }
+            Command::SetTime(conn_id, time, signal) => {
+                match self.set_time(conn_id, time) {
+                    Ok(()) => {
+                        if signal.send(Ok(())).is_err() {
+                            warn!("failed to send set time response to {conn_id}");
+                        }
+                    }
+                    Err(err) => {
+                        error!("failed to set time for client {conn_id}: {err}");
+                        if signal.send(Err(err)).is_err() {
+                            debug!("Failed to send error response for set_time, receiver dropped");
+                        }
+                    }
+                }
+            }
+            Command::Disconnect(conn_id) => {
+                if let Err(err) = self.disconnect(conn_id).await {
+                    error!("failed to disconnect client {conn_id}: {err}");
+                }
+            }
+            Command::Shutdown => return false,
         }
+
+        self.cleanup_timers();
+        true
+    }
+
+    pub async fn run(mut self) {
+        while self.run_single_iteration().await {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::timer::test::MockTimerFactory;
+    use tokio::time::sleep;
+
+    #[tokio::test]
+    async fn test_server_creates_timer_on_first_connection() {
+        let factory = MockTimerFactory::new();
+        let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let result = handle.connect(timer_id).await;
+        assert!(result.is_ok());
+
+        sleep(Duration::from_millis(10)).await;
+        assert_eq!(factory.created_count(), 1, "Should create one timer on first connection");
+    }
+
+    #[tokio::test]
+    async fn test_server_reuses_timer_for_same_id() {
+        let factory = MockTimerFactory::new();
+        let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let _conn1 = handle.connect(timer_id).await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        let _conn2 = handle.connect(timer_id).await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        assert_eq!(factory.created_count(), 1, "Should reuse existing timer for same timer_id");
+    }
+
+    #[tokio::test]
+    async fn test_server_creates_different_timers_for_different_ids() {
+        let factory = MockTimerFactory::new();
+        let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        tokio::spawn(server.run());
+
+        let timer_id1 = Uuid::new_v4();
+        let timer_id2 = Uuid::new_v4();
+
+        let _conn1 = handle.connect(timer_id1).await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        let _conn2 = handle.connect(timer_id2).await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        assert_eq!(factory.created_count(), 2, "Should create separate timers for different timer_ids");
+    }
+
+    #[tokio::test]
+    async fn test_bound_handle_sends_commands() {
+        let factory = MockTimerFactory::new();
+        let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let (bound_handle, mut msg_rx) = handle.connect(timer_id).await.unwrap();
+
+        sleep(Duration::from_millis(10)).await;
+
+        bound_handle.set_time(5000).await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        bound_handle.start_counter().await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        bound_handle.stop_counter().await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        while let Ok(_) = msg_rx.try_recv() {}
+    }
+
+    #[tokio::test]
+    async fn test_server_shutdown() {
+        let factory = MockTimerFactory::new();
+        let (mut server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        handle.shutdown().unwrap();
+
+        let continues = server.run_single_iteration().await;
+        assert!(!continues, "Server should stop after shutdown command");
+    }
+
+    #[tokio::test]
+    async fn test_server_single_iteration_processes_connect() {
+        let factory = MockTimerFactory::new();
+        let (mut server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        let timer_id = Uuid::new_v4();
+        tokio::spawn(async move {
+            handle.connect(timer_id).await.unwrap();
+        });
+
+        sleep(Duration::from_millis(5)).await;
+        let continues = server.run_single_iteration().await;
+        assert!(continues, "Server should continue after processing connect");
+        assert_eq!(factory.created_count(), 1, "Should have created one timer");
+    }
+
+    #[tokio::test]
+    async fn test_server_handles_error_for_invalid_client() {
+        let factory = MockTimerFactory::new();
+        let (mut server, _handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        let invalid_conn_id = Uuid::new_v4();
+
+        let result = server.set_time(invalid_conn_id, 1000);
+        assert!(result.is_err(), "Should return error for invalid client");
+
+        let result = server.start_counter(invalid_conn_id).await;
+        assert!(result.is_err(), "Should return error for invalid client");
+
+        let result = server.stop_counter(invalid_conn_id).await;
+        assert!(result.is_err(), "Should return error for invalid client");
+    }
+
+    #[tokio::test]
+    async fn test_multiple_clients_receive_same_timer_updates() {
+        let factory = MockTimerFactory::new();
+        let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let (bound_handle1, mut msg_rx1) = handle.connect(timer_id).await.unwrap();
+        let (bound_handle2, mut msg_rx2) = handle.connect(timer_id).await.unwrap();
+
+        sleep(Duration::from_millis(10)).await;
+
+        bound_handle1.set_time(3000).await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        while msg_rx1.try_recv().is_ok() {}
+        while msg_rx2.try_recv().is_ok() {}
+
+        bound_handle2.start_counter().await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        let msg1 = msg_rx1.try_recv();
+        let msg2 = msg_rx2.try_recv();
+
+        assert!(msg1.is_ok(), "Client 1 should receive timer update");
+        assert!(msg2.is_ok(), "Client 2 should receive timer update");
+
+        let msg1 = msg1.unwrap();
+        let msg2 = msg2.unwrap();
+
+        assert_eq!(msg1.target_time, 3000);
+        assert_eq!(msg2.target_time, 3000);
+        assert!(msg1.is_running);
+        assert!(msg2.is_running);
+        assert_eq!(msg1.client_count, 2);
+        assert_eq!(msg2.client_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_client_disconnect_reduces_count() {
+        let factory = MockTimerFactory::new();
+        let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let (bound_handle1, mut msg_rx1) = handle.connect(timer_id).await.unwrap();
+        let (bound_handle2, mut msg_rx2) = handle.connect(timer_id).await.unwrap();
+
+        sleep(Duration::from_millis(10)).await;
+        while msg_rx1.try_recv().is_ok() {}
+        while msg_rx2.try_recv().is_ok() {}
+
+        drop(bound_handle2);
+        drop(msg_rx2);
+
+        sleep(Duration::from_millis(10)).await;
+
+        bound_handle1.set_time(1000).await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        while let Ok(msg) = msg_rx1.try_recv() {
+            if msg.client_count == 1 {
+                return;
+            }
+        }
+
+        sleep(Duration::from_millis(20)).await;
+        let msg = msg_rx1.try_recv().unwrap();
+        assert_eq!(msg.client_count, 1, "Client count should be 1 after disconnect");
+    }
+
+    #[tokio::test]
+    async fn test_different_timers_are_independent() {
+        let factory = MockTimerFactory::new();
+        let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        tokio::spawn(server.run());
+
+        let timer_id1 = Uuid::new_v4();
+        let timer_id2 = Uuid::new_v4();
+
+        let (bound_handle1, mut msg_rx1) = handle.connect(timer_id1).await.unwrap();
+        let (bound_handle2, mut msg_rx2) = handle.connect(timer_id2).await.unwrap();
+
+        sleep(Duration::from_millis(10)).await;
+
+        bound_handle1.set_time(1000).await.unwrap();
+        bound_handle2.set_time(2000).await.unwrap();
+
+        sleep(Duration::from_millis(10)).await;
+
+        while msg_rx1.try_recv().is_ok() {}
+        while msg_rx2.try_recv().is_ok() {}
+
+        bound_handle1.start_counter().await.unwrap();
+        bound_handle2.set_time(3000).await.unwrap();
+
+        sleep(Duration::from_millis(10)).await;
+
+        let mut timer1_msg = None;
+        let mut timer2_msg = None;
+
+        while let Ok(msg) = msg_rx1.try_recv() {
+            timer1_msg = Some(msg);
+        }
+        while let Ok(msg) = msg_rx2.try_recv() {
+            timer2_msg = Some(msg);
+        }
+
+        assert!(timer1_msg.is_some(), "Should receive timer 1 message");
+        assert!(timer2_msg.is_some(), "Should receive timer 2 message");
+
+        let timer1_msg = timer1_msg.unwrap();
+        let timer2_msg = timer2_msg.unwrap();
+
+        assert!(timer1_msg.is_running, "Timer 1 should be running");
+        assert_eq!(timer1_msg.target_time, 1000, "Timer 1 should have target time 1000");
+        assert!(!timer2_msg.is_running, "Timer 2 should not be running");
+        assert_eq!(timer2_msg.target_time, 3000, "Timer 2 should have target time 3000");
     }
 }
