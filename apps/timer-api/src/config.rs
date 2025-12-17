@@ -1,9 +1,29 @@
 use std::time::Duration;
 
 /// Configuration for the timer's tick behavior.
+///
+/// The timer uses an interval-based approach where it "ticks" at regular intervals to
+/// update elapsed time. The `tick_interval` controls how often these updates occur.
+///
+/// # Examples
+///
+/// ```
+/// use std::time::Duration;
+/// use timer_api::config::TimerConfig;
+///
+/// // Production: tick every 100ms for good balance of accuracy and performance
+/// let config = TimerConfig::default();
+/// assert_eq!(config.tick_interval, Duration::from_millis(100));
+///
+/// // Testing: tick every 1ms for fast tests
+/// let test_config = TimerConfig::for_testing();
+/// assert_eq!(test_config.tick_interval, Duration::from_millis(1));
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct TimerConfig {
-    /// Interval between timer ticks. Determines how frequently elapsed time is calculated.
+    /// Interval between timer ticks. Determines how frequently the timer checks for elapsed time
+    /// and updates its state. Shorter intervals provide more granular timing but use more CPU.
+    /// For a presentation timer, 100ms (default) provides sufficient accuracy.
     pub tick_interval: Duration,
 }
 
@@ -18,7 +38,9 @@ impl Default for TimerConfig {
 impl TimerConfig {
     pub fn for_testing() -> Self {
         Self {
-            tick_interval: Duration::from_millis(1), // Much faster for tests
+            // 1ms ticks for fast tests - aggressive but works on modern systems.
+            // Adjust to 5-10ms if CI flakiness occurs on slower systems.
+            tick_interval: Duration::from_millis(1),
         }
     }
 }

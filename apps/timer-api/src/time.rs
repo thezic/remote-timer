@@ -405,12 +405,15 @@ mod tests {
             tick_count
         });
 
+        // Allow spawned task to be scheduled and poll the interval
         tokio::time::sleep(Duration::from_millis(1)).await;
 
         mock_time.advance(Duration::from_millis(100));
+        // Allow interval to process the time advance and wake
         tokio::time::sleep(Duration::from_millis(1)).await;
 
         mock_time.advance(Duration::from_millis(100));
+        // Allow interval to process the time advance and wake
         tokio::time::sleep(Duration::from_millis(1)).await;
 
         let result = handle.await.unwrap();
@@ -440,8 +443,8 @@ mod tests {
                         break;  // Stream ended
                     }
                 }
+                // Use real sleep as a timeout - if we have to wait, we've gotten all available ticks
                 _ = tokio::time::sleep(Duration::from_millis(1)) => {
-                    // If we have to wait, we've gotten all available ticks
                     break;
                 }
             }
