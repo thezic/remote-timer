@@ -450,4 +450,127 @@ mod tests {
         let result = server.stop_counter(invalid_conn_id).await;
         assert!(result.is_err(), "Should return error for invalid client");
     }
+
+    #[tokio::test]
+    async fn test_multiple_clients_receive_same_timer_updates() {
+        let factory = MockTimerFactory::new();
+        let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let (bound_handle1, mut msg_rx1) = handle.connect(timer_id).await.unwrap();
+        let (bound_handle2, mut msg_rx2) = handle.connect(timer_id).await.unwrap();
+
+        sleep(Duration::from_millis(10)).await;
+
+        bound_handle1.set_time(3000).await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        while msg_rx1.try_recv().is_ok() {}
+        while msg_rx2.try_recv().is_ok() {}
+
+        bound_handle2.start_counter().await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        let msg1 = msg_rx1.try_recv();
+        let msg2 = msg_rx2.try_recv();
+
+        assert!(msg1.is_ok(), "Client 1 should receive timer update");
+        assert!(msg2.is_ok(), "Client 2 should receive timer update");
+
+        let msg1 = msg1.unwrap();
+        let msg2 = msg2.unwrap();
+
+        assert_eq!(msg1.target_time, 3000);
+        assert_eq!(msg2.target_time, 3000);
+        assert_eq!(msg1.is_running, true);
+        assert_eq!(msg2.is_running, true);
+        assert_eq!(msg1.client_count, 2);
+        assert_eq!(msg2.client_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_client_disconnect_reduces_count() {
+        let factory = MockTimerFactory::new();
+        let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let (bound_handle1, mut msg_rx1) = handle.connect(timer_id).await.unwrap();
+        let (bound_handle2, mut msg_rx2) = handle.connect(timer_id).await.unwrap();
+
+        sleep(Duration::from_millis(10)).await;
+        while msg_rx1.try_recv().is_ok() {}
+        while msg_rx2.try_recv().is_ok() {}
+
+        drop(bound_handle2);
+        drop(msg_rx2);
+
+        sleep(Duration::from_millis(10)).await;
+
+        bound_handle1.set_time(1000).await.unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        while let Ok(msg) = msg_rx1.try_recv() {
+            if msg.client_count == 1 {
+                return;
+            }
+        }
+
+        sleep(Duration::from_millis(20)).await;
+        let msg = msg_rx1.try_recv().unwrap();
+        assert_eq!(msg.client_count, 1, "Client count should be 1 after disconnect");
+    }
+
+    #[tokio::test]
+    async fn test_different_timers_are_independent() {
+        let factory = MockTimerFactory::new();
+        let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        tokio::spawn(server.run());
+
+        let timer_id1 = Uuid::new_v4();
+        let timer_id2 = Uuid::new_v4();
+
+        let (bound_handle1, mut msg_rx1) = handle.connect(timer_id1).await.unwrap();
+        let (bound_handle2, mut msg_rx2) = handle.connect(timer_id2).await.unwrap();
+
+        sleep(Duration::from_millis(10)).await;
+
+        bound_handle1.set_time(1000).await.unwrap();
+        bound_handle2.set_time(2000).await.unwrap();
+
+        sleep(Duration::from_millis(10)).await;
+
+        while msg_rx1.try_recv().is_ok() {}
+        while msg_rx2.try_recv().is_ok() {}
+
+        bound_handle1.start_counter().await.unwrap();
+        bound_handle2.set_time(3000).await.unwrap();
+
+        sleep(Duration::from_millis(10)).await;
+
+        let mut timer1_msg = None;
+        let mut timer2_msg = None;
+
+        while let Ok(msg) = msg_rx1.try_recv() {
+            timer1_msg = Some(msg);
+        }
+        while let Ok(msg) = msg_rx2.try_recv() {
+            timer2_msg = Some(msg);
+        }
+
+        assert!(timer1_msg.is_some(), "Should receive timer 1 message");
+        assert!(timer2_msg.is_some(), "Should receive timer 2 message");
+
+        let timer1_msg = timer1_msg.unwrap();
+        let timer2_msg = timer2_msg.unwrap();
+
+        assert!(timer1_msg.is_running, "Timer 1 should be running");
+        assert_eq!(timer1_msg.target_time, 1000, "Timer 1 should have target time 1000");
+        assert!(!timer2_msg.is_running, "Timer 2 should not be running");
+        assert_eq!(timer2_msg.target_time, 3000, "Timer 2 should have target time 3000");
+    }
 }

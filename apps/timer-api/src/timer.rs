@@ -23,10 +23,10 @@ pub enum Command {
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct TimerMessage {
-    is_running: bool,
-    current_time: i32,
-    target_time: i32,
-    client_count: usize,
+    pub is_running: bool,
+    pub current_time: i32,
+    pub target_time: i32,
+    pub client_count: usize,
 }
 
 pub struct Timer<T: TimeSource> {
@@ -400,6 +400,84 @@ pub mod test {
 
         let continues = timer.run_single_iteration(&mut interval_stream, &mut last_tick, &mut is_counting).await;
         assert!(!continues, "Timer should stop after close command");
+    }
+
+    #[tokio::test]
+    async fn test_timer_handles_rapid_commands() {
+        use crate::time::mock::MockTime;
+        let mock_time = MockTime::new();
+        let config = TimerConfig::for_testing();
+        let (timer, timer_handle) = super::Timer::new(mock_time.clone(), config);
+
+        tokio::spawn(timer.run());
+
+        let client_id = uuid::Uuid::new_v4();
+        let mut msg_rx = timer_handle.subscribe(client_id).unwrap();
+
+        for i in 0..10 {
+            timer_handle.set_time(i * 100).unwrap();
+            timer_handle.start_counter().unwrap();
+            timer_handle.stop_counter().unwrap();
+        }
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        while msg_rx.try_recv().is_ok() {}
+
+        timer_handle.close().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_timer_handles_large_time_values() {
+        use crate::time::mock::MockTime;
+        let mock_time = MockTime::new();
+        let config = TimerConfig::for_testing();
+        let (timer, timer_handle) = super::Timer::new(mock_time.clone(), config);
+
+        tokio::spawn(timer.run());
+
+        let client_id = uuid::Uuid::new_v4();
+        let mut msg_rx = timer_handle.subscribe(client_id).unwrap();
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        while msg_rx.try_recv().is_ok() {}
+
+        timer_handle.set_time(i32::MAX).unwrap();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let msg = msg_rx.try_recv();
+        assert!(msg.is_ok());
+        let msg = msg.unwrap();
+        assert_eq!(msg.target_time, i32::MAX);
+
+        timer_handle.close().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_timer_closes_receiver_on_shutdown() {
+        use crate::time::mock::MockTime;
+        let mock_time = MockTime::new();
+        let config = TimerConfig::for_testing();
+        let (timer, timer_handle) = super::Timer::new(mock_time.clone(), config);
+
+        tokio::spawn(timer.run());
+
+        let client_id = uuid::Uuid::new_v4();
+        let mut msg_rx = timer_handle.subscribe(client_id).unwrap();
+
+        timer_handle.close().unwrap();
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let mut received_none = false;
+        for _ in 0..5 {
+            if msg_rx.recv().await.is_none() {
+                received_none = true;
+                break;
+            }
+        }
+
+        assert!(received_none, "Receiver should be closed after timer shutdown");
     }
 
     #[derive(Clone)]
