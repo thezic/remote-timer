@@ -76,7 +76,13 @@ async fn handler_with_transport<T: Transport>(
             },
 
             msg = timer_msg.recv() => {
-                let json = serde_json::to_string(&msg).unwrap();
+                let json = match serde_json::to_string(&msg) {
+                    Ok(json) => json,
+                    Err(err) => {
+                        error!("Failed to serialize message: {err}");
+                        break Some("Serialization failed".to_string());
+                    }
+                };
                 if let Err(err) = transport.send_text(&json).await {
                     error!("Failed to send message: {err}");
                     break Some("Send failed".to_string());

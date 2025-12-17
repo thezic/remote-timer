@@ -7,7 +7,7 @@ use crate::config::TimerConfig;
 use crate::timer::{self, RealTimerFactory, TimerFactory, TimerHandle, TimerMessage};
 use anyhow::Result;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 const MAX_TIMER_AGE: Duration = Duration::from_secs(30 * 60); // 30 minutes
@@ -259,32 +259,60 @@ impl<F: TimerFactory> TimerServer<F> {
 
         match msg {
             Command::Connect(timer_id, signal) => {
-                let (conn_id, receiver) = self.connect(timer_id).await.unwrap();
-
-                if signal.send((conn_id, receiver)).is_err() {
-                    warn!("failed to send connection id");
-                };
+                match self.connect(timer_id).await {
+                    Ok((conn_id, receiver)) => {
+                        if signal.send((conn_id, receiver)).is_err() {
+                            warn!("failed to send connection id for timer {timer_id}");
+                        }
+                    }
+                    Err(err) => {
+                        error!("failed to connect to timer {timer_id}: {err}");
+                    }
+                }
             }
             Command::StartCounter(conn_id, signal) => {
-                self.start_counter(conn_id).await.unwrap();
-                if signal.send(Ok(())).is_err() {
-                    warn!("failed to send start counter response to client {conn_id}");
+                match self.start_counter(conn_id).await {
+                    Ok(()) => {
+                        if signal.send(Ok(())).is_err() {
+                            warn!("failed to send start counter response to client {conn_id}");
+                        }
+                    }
+                    Err(err) => {
+                        error!("failed to start counter for client {conn_id}: {err}");
+                        let _ = signal.send(Err(err));
+                    }
                 }
             }
             Command::StopCounter(conn_id, signal) => {
-                self.stop_counter(conn_id).await.unwrap();
-                if signal.send(Ok(())).is_err() {
-                    warn!("failed to send stop counter response to client {conn_id}");
+                match self.stop_counter(conn_id).await {
+                    Ok(()) => {
+                        if signal.send(Ok(())).is_err() {
+                            warn!("failed to send stop counter response to client {conn_id}");
+                        }
+                    }
+                    Err(err) => {
+                        error!("failed to stop counter for client {conn_id}: {err}");
+                        let _ = signal.send(Err(err));
+                    }
                 }
             }
             Command::SetTime(conn_id, time, signal) => {
-                self.set_time(conn_id, time).unwrap();
-                if let Err(err) = signal.send(Ok(())) {
-                    warn!("failed to send set time response to {conn_id}: {err:?}");
+                match self.set_time(conn_id, time) {
+                    Ok(()) => {
+                        if signal.send(Ok(())).is_err() {
+                            warn!("failed to send set time response to {conn_id}");
+                        }
+                    }
+                    Err(err) => {
+                        error!("failed to set time for client {conn_id}: {err}");
+                        let _ = signal.send(Err(err));
+                    }
                 }
             }
             Command::Disconnect(conn_id) => {
-                self.disconnect(conn_id).await.unwrap();
+                if let Err(err) = self.disconnect(conn_id).await {
+                    error!("failed to disconnect client {conn_id}: {err}");
+                }
             }
             Command::Shutdown => return false,
         }
@@ -404,5 +432,22 @@ mod tests {
         let continues = server.run_single_iteration().await;
         assert!(continues, "Server should continue after processing connect");
         assert_eq!(factory.created_count(), 1, "Should have created one timer");
+    }
+
+    #[tokio::test]
+    async fn test_server_handles_error_for_invalid_client() {
+        let factory = MockTimerFactory::new();
+        let (mut server, _handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
+
+        let invalid_conn_id = Uuid::new_v4();
+
+        let result = server.set_time(invalid_conn_id, 1000);
+        assert!(result.is_err(), "Should return error for invalid client");
+
+        let result = server.start_counter(invalid_conn_id).await;
+        assert!(result.is_err(), "Should return error for invalid client");
+
+        let result = server.stop_counter(invalid_conn_id).await;
+        assert!(result.is_err(), "Should return error for invalid client");
     }
 }
