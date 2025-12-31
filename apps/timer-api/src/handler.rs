@@ -1,158 +1,155 @@
 use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
-
 use actix_ws::{MessageStream, Session};
+use futures_util::StreamExt;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use anyhow::Result;
-
 use crate::config::HandlerConfig;
-use crate::server::{BoundServerHandle, ServerHandle};
-use crate::transport::{Transport, TransportMessage, WebSocketTransport};
+use crate::message_handler::{handle_client_command, parse_client_message, serialize_timer_message};
+use crate::server::ServerHandle;
 
+/// WebSocket handler for timer connections.
+///
+/// This is a thin integration layer that:
+/// - Receives WebSocket messages and parses them using message_handler
+/// - Forwards timer updates to connected clients
+/// - Manages heartbeat/ping-pong for connection health
+///
+/// All business logic lives in message_handler (parsing/serialization) and
+/// server/timer (state management). This handler is intentionally simple.
 pub async fn handler(
-    session: Session,
+    mut session: Session,
     stream: MessageStream,
-    server_handle: ServerHandle,
-    timer_id: Uuid,
-    config: HandlerConfig,
-) {
-    let mut transport = WebSocketTransport::new(session, stream);
-    handler_with_transport(&mut transport, server_handle, timer_id, config).await
-}
-
-async fn handler_with_transport<T: Transport>(
-    transport: &mut T,
     server_handle: ServerHandle,
     timer_id: Uuid,
     config: HandlerConfig,
 ) {
     info!("connected");
 
+    let mut stream = stream.aggregate_continuations();
     let mut last_heartbeat = Instant::now();
     let mut interval = interval(config.heartbeat_interval);
 
+    // Connect to the timer server
     let (bound_handle, mut timer_msg) = match server_handle.connect(timer_id).await {
-        Ok(stuff) => stuff,
+        Ok(result) => result,
         Err(err) => {
-            let _ = transport
-                .close(Some(&format!("Failed to connect to timer: {err}")))
+            error!("Failed to connect to timer {timer_id}: {err}");
+            let _ = session
+                .close(Some(actix_ws::CloseReason {
+                    code: actix_ws::CloseCode::Error,
+                    description: Some(format!("Failed to connect to timer: {err}")),
+                }))
                 .await;
             return;
         }
     };
 
-    let close_reason: Option<String> = loop {
+    // Main event loop
+    let close_reason: Option<actix_ws::CloseReason> = loop {
         let tick = interval.tick();
 
         tokio::select! {
-            msg = transport.recv() => {
+            // Handle incoming WebSocket messages
+            msg = stream.next() => {
                 debug!("received message: {msg:?}");
                 match msg {
-                    Ok(Some(msg)) => match msg {
-                        TransportMessage::Text(text) => {
-                            if let Err(err) = handle_text_message(&text, &bound_handle).await {
-                                error!("Error: {err}");
+                    Some(Ok(actix_ws::AggregatedMessage::Text(text))) => {
+                        match parse_client_message(&text) {
+                            Ok(cmd) => {
+                                if let Err(err) = handle_client_command(cmd, &bound_handle).await {
+                                    error!("Error handling command: {err}");
+                                }
                             }
-                        },
-                        TransportMessage::Binary(_) => warn!("Received unexpected binary message"),
-                        TransportMessage::Ping(bytes) => {
-                            if transport.pong(&bytes).await.is_err() {
-                                break Some("Pong failed".to_string());
+                            Err(err) => {
+                                error!("Failed to parse message: {err}");
                             }
-                        },
-                        TransportMessage::Pong(_) => last_heartbeat = Instant::now(),
-                        TransportMessage::Close(reason) => break reason,
-                    },
-                    Ok(None) => break Some("Connection closed".to_string()),
-                    Err(err) => {
-                        error!("Error: {err}");
-                        break Some(err.to_string());
+                        }
                     }
-                }
-            },
-
-            msg = timer_msg.recv() => {
-                let json = match serde_json::to_string(&msg) {
-                    Ok(json) => json,
-                    Err(err) => {
-                        error!("Failed to serialize message: {err}");
-                        break Some("Serialization failed".to_string());
+                    Some(Ok(actix_ws::AggregatedMessage::Binary(_))) => {
+                        warn!("Received unexpected binary message");
                     }
-                };
-                if let Err(err) = transport.send_text(&json).await {
-                    error!("Failed to send message: {err}");
-                    break Some("Send failed".to_string());
+                    Some(Ok(actix_ws::AggregatedMessage::Ping(bytes))) => {
+                        if session.pong(&bytes).await.is_err() {
+                            break Some(actix_ws::CloseReason {
+                                code: actix_ws::CloseCode::Abnormal,
+                                description: Some("Pong failed".to_string()),
+                            });
+                        }
+                    }
+                    Some(Ok(actix_ws::AggregatedMessage::Pong(_))) => {
+                        last_heartbeat = Instant::now();
+                    }
+                    Some(Ok(actix_ws::AggregatedMessage::Close(reason))) => {
+                        break reason;
+                    }
+                    Some(Err(err)) => {
+                        error!("WebSocket error: {err}");
+                        break Some(actix_ws::CloseReason {
+                            code: actix_ws::CloseCode::Error,
+                            description: Some(err.to_string()),
+                        });
+                    }
+                    None => {
+                        break Some(actix_ws::CloseReason {
+                            code: actix_ws::CloseCode::Normal,
+                            description: Some("Connection closed".to_string()),
+                        });
+                    }
                 }
             }
 
+            // Forward timer updates to client
+            msg = timer_msg.recv() => {
+                let Some(msg) = msg else {
+                    // Timer channel closed
+                    break Some(actix_ws::CloseReason {
+                        code: actix_ws::CloseCode::Normal,
+                        description: Some("Timer closed".to_string()),
+                    });
+                };
+
+                match serialize_timer_message(&msg) {
+                    Ok(json) => {
+                        if let Err(err) = session.text(json).await {
+                            error!("Failed to send timer update: {err}");
+                            break Some(actix_ws::CloseReason {
+                                code: actix_ws::CloseCode::Error,
+                                description: Some("Send failed".to_string()),
+                            });
+                        }
+                    }
+                    Err(err) => {
+                        error!("Failed to serialize timer message: {err}");
+                        break Some(actix_ws::CloseReason {
+                            code: actix_ws::CloseCode::Error,
+                            description: Some("Serialization failed".to_string()),
+                        });
+                    }
+                }
+            }
+
+            // Heartbeat tick
             _tick = tick => {
                 if Instant::now() - last_heartbeat > config.client_timeout {
-                    break Some("Client timeout".to_string());
+                    break Some(actix_ws::CloseReason {
+                        code: actix_ws::CloseCode::Error,
+                        description: Some("Client timeout".to_string()),
+                    });
                 }
 
-                if transport.ping(b"").await.is_err() {
-                    break Some("Ping failed".to_string());
+                if session.ping(b"").await.is_err() {
+                    break Some(actix_ws::CloseReason {
+                        code: actix_ws::CloseCode::Error,
+                        description: Some("Ping failed".to_string()),
+                    });
                 }
             }
-        };
+        }
     };
 
     info!("Disconnected: {close_reason:?}");
-    let _ = transport.close(close_reason.as_deref()).await;
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-enum Message {
-    StartTimer,
-    StopTimer,
-    SetTime { time: i32 },
-}
-
-async fn handle_text_message(message: &str, server_handle: &BoundServerHandle) -> Result<()> {
-    let msg: Message = serde_json::from_str(message)?;
-
-    match msg {
-        Message::StartTimer => server_handle.start_counter().await,
-        Message::StopTimer => server_handle.stop_counter().await,
-        Message::SetTime { time } => server_handle.set_time(time).await,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::transport::mock::MockTransport;
-    use crate::transport::TransportMessage;
-
-    #[tokio::test]
-    async fn test_mock_transport_receives_text() {
-        let mut transport = MockTransport::new();
-
-        transport.queue_message(TransportMessage::Text(r#"{"type":"StartTimer"}"#.to_string()));
-        transport.queue_message(TransportMessage::Close(Some("test done".to_string())));
-
-        let msg1 = transport.recv().await.unwrap();
-        assert!(matches!(msg1, Some(TransportMessage::Text(s)) if s.contains("StartTimer")));
-
-        let msg2 = transport.recv().await.unwrap();
-        assert!(matches!(msg2, Some(TransportMessage::Close(_))));
-    }
-
-    #[tokio::test]
-    async fn test_mock_transport_send_and_receive() {
-        let mut transport = MockTransport::new();
-
-        transport.send_text("hello").await.unwrap();
-        transport.send_text("world").await.unwrap();
-
-        let sent = transport.get_sent_messages();
-        assert_eq!(sent.len(), 2);
-        assert_eq!(sent[0], "hello");
-        assert_eq!(sent[1], "world");
-    }
+    let _ = session.close(close_reason).await;
 }
