@@ -1,15 +1,14 @@
 use std::{
     collections::HashMap,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
+use crate::config::Config;
 use crate::timer::{self, Timer, TimerHandle, TimerMessage};
 use anyhow::Result;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 use uuid::Uuid;
-
-const MAX_TIMER_AGE: Duration = Duration::from_secs(30 * 60); // 30 minutes
 
 type TimerId = Uuid;
 type ConnId = Uuid;
@@ -23,6 +22,7 @@ pub enum Command {
     StartCounter(ConnId, oneshot::Sender<Result<()>>),
     StopCounter(ConnId, oneshot::Sender<Result<()>>),
     SetTime(ConnId, i32, oneshot::Sender<Result<()>>),
+    Shutdown,
 }
 
 pub struct TimerServer {
@@ -30,6 +30,7 @@ pub struct TimerServer {
     timers: HashMap<TimerId, TimerHandle>,
     clients: HashMap<ConnId, TimerId>,
     timers_to_cleanup: HashMap<TimerId, Instant>,
+    config: Config,
 }
 
 #[derive(Debug, Clone)]
@@ -105,13 +106,21 @@ impl ServerHandle {
 
     pub fn disconnect(&self, conn_id: ConnId) -> Result<()> {
         self.cmd_tx.send(Command::Disconnect(conn_id))?;
-        debug!("Disconnevting {conn_id}");
+        debug!("Disconnecting {conn_id}");
         Ok(())
+    }
+
+    pub fn shutdown(&self) -> Result<()> {
+        Ok(self.cmd_tx.send(Command::Shutdown)?)
     }
 }
 
 impl TimerServer {
     pub fn new() -> (Self, ServerHandle) {
+        Self::with_config(Config::default())
+    }
+
+    pub fn with_config(config: Config) -> (Self, ServerHandle) {
         let (msg_tx, msg_rx) = mpsc::unbounded_channel::<Command>();
 
         let server = TimerServer {
@@ -119,17 +128,16 @@ impl TimerServer {
             command_rx: msg_rx,
             timers: HashMap::new(),
             timers_to_cleanup: HashMap::new(),
+            config,
         };
 
         (server, ServerHandle { cmd_tx: msg_tx })
     }
 
     fn create_timer(&mut self, id: TimerId) -> TimerHandle {
-        let (timer, handle) = Timer::new();
+        let (timer, handle) = Timer::new(self.config.tick_interval);
+        tokio::spawn(timer.run());
         self.timers.insert(id, handle.clone());
-
-        let _task_handle = tokio::spawn(timer.run());
-
         handle
     }
 
@@ -194,8 +202,9 @@ impl TimerServer {
     }
 
     fn cleanup_timers(&mut self) {
+        let max_age = self.config.max_timer_age;
         self.timers_to_cleanup.retain(|&timer_id, created_at| {
-            if created_at.elapsed() > MAX_TIMER_AGE {
+            if created_at.elapsed() > max_age {
                 debug!("Remove timer {timer_id}");
                 if let Some(timer) = self.timers.remove(&timer_id) {
                     _ = timer.close();
@@ -242,43 +251,518 @@ impl TimerServer {
         while let Some(msg) = self.command_rx.recv().await {
             match msg {
                 Command::Connect(timer_id, signal) => {
-                    // TODO: Handle error here
-                    let (conn_id, receiver) = self.connect(timer_id).await.unwrap();
-
-                    if signal.send((conn_id, receiver)).is_err() {
-                        // TODO: We should probably cleanup this connection
-                        warn!("failed to send connection id");
-                    };
+                    match self.connect(timer_id).await {
+                        Ok((conn_id, receiver)) => {
+                            if signal.send((conn_id, receiver)).is_err() {
+                                warn!("failed to send connection id for timer {timer_id}");
+                            }
+                        }
+                        Err(err) => {
+                            error!("failed to connect to timer {timer_id}: {err}");
+                        }
+                    }
                 }
                 Command::StartCounter(conn_id, signal) => {
-                    // TODO: Handle error here
-                    self.start_counter(conn_id).await.unwrap();
-                    if signal.send(Ok(())).is_err() {
-                        warn!("failed to send start counter response to client {conn_id}");
+                    match self.start_counter(conn_id).await {
+                        Ok(()) => {
+                            if signal.send(Ok(())).is_err() {
+                                warn!("failed to send start counter response to client {conn_id}");
+                            }
+                        }
+                        Err(err) => {
+                            error!("failed to start counter for client {conn_id}: {err}");
+                            if signal.send(Err(err)).is_err() {
+                                debug!("Failed to send error response for start_counter, receiver dropped");
+                            }
+                        }
                     }
                 }
                 Command::StopCounter(conn_id, signal) => {
-                    // TODO: Handle error here
-                    self.stop_counter(conn_id).await.unwrap();
-                    if signal.send(Ok(())).is_err() {
-                        warn!("failed to send stop counter response to client {conn_id}");
+                    match self.stop_counter(conn_id).await {
+                        Ok(()) => {
+                            if signal.send(Ok(())).is_err() {
+                                warn!("failed to send stop counter response to client {conn_id}");
+                            }
+                        }
+                        Err(err) => {
+                            error!("failed to stop counter for client {conn_id}: {err}");
+                            if signal.send(Err(err)).is_err() {
+                                debug!("Failed to send error response for stop_counter, receiver dropped");
+                            }
+                        }
                     }
                 }
                 Command::SetTime(conn_id, time, signal) => {
-                    // TODO: Handle error here
-                    self.set_time(conn_id, time).unwrap();
-                    if let Err(err) = signal.send(Ok(())) {
-                        warn!("failed to send set time response to {conn_id}: {err:?}");
+                    match self.set_time(conn_id, time) {
+                        Ok(()) => {
+                            if signal.send(Ok(())).is_err() {
+                                warn!("failed to send set time response to {conn_id}");
+                            }
+                        }
+                        Err(err) => {
+                            error!("failed to set time for client {conn_id}: {err}");
+                            if signal.send(Err(err)).is_err() {
+                                debug!("Failed to send error response for set_time, receiver dropped");
+                            }
+                        }
                     }
                 }
-
                 Command::Disconnect(conn_id) => {
-                    // TODO: Handle error here
-                    self.disconnect(conn_id).await.unwrap();
+                    if let Err(err) = self.disconnect(conn_id).await {
+                        error!("failed to disconnect client {conn_id}: {err}");
+                    }
                 }
+                Command::Shutdown => break,
             }
 
             self.cleanup_timers();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn test_server_creates_timer_on_first_connection() {
+        tokio::time::pause();
+
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
+
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let result = handle.connect(timer_id).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_server_reuses_timer_for_same_id() {
+        tokio::time::pause();
+
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
+
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let _conn1 = handle.connect(timer_id).await.unwrap();
+        tokio::time::advance(Duration::from_millis(10)).await;
+
+        let _conn2 = handle.connect(timer_id).await.unwrap();
+        tokio::time::advance(Duration::from_millis(10)).await;
+    }
+
+    #[tokio::test]
+    async fn test_server_creates_different_timers_for_different_ids() {
+        tokio::time::pause();
+
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
+
+        tokio::spawn(server.run());
+
+        let timer_id1 = Uuid::new_v4();
+        let timer_id2 = Uuid::new_v4();
+
+        let _conn1 = handle.connect(timer_id1).await.unwrap();
+        tokio::time::advance(Duration::from_millis(10)).await;
+
+        let _conn2 = handle.connect(timer_id2).await.unwrap();
+        tokio::time::advance(Duration::from_millis(10)).await;
+    }
+
+    #[tokio::test]
+    async fn test_bound_handle_sends_commands() {
+        tokio::time::pause();
+
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
+
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let (bound_handle, mut msg_rx) = handle.connect(timer_id).await.unwrap();
+
+        tokio::time::advance(Duration::from_millis(10)).await;
+
+        bound_handle.set_time(5000).await.unwrap();
+        tokio::time::advance(Duration::from_millis(10)).await;
+
+        bound_handle.start_counter().await.unwrap();
+        tokio::time::advance(Duration::from_millis(10)).await;
+
+        bound_handle.stop_counter().await.unwrap();
+        tokio::time::advance(Duration::from_millis(10)).await;
+
+        while let Ok(_) = msg_rx.try_recv() {}
+    }
+
+    #[tokio::test]
+    async fn test_server_shutdown() {
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
+
+        let server_task = tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let _ = handle.connect(timer_id).await.unwrap();
+
+        handle.shutdown().unwrap();
+
+        let result = tokio::time::timeout(Duration::from_millis(100), server_task).await;
+        assert!(result.is_ok(), "Server should shutdown cleanly");
+    }
+
+    #[tokio::test]
+    async fn test_server_handles_error_for_invalid_client() {
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (mut server, _handle) = TimerServer::with_config(config);
+
+        let invalid_conn_id = Uuid::new_v4();
+
+        let result = server.set_time(invalid_conn_id, 1000);
+        assert!(result.is_err(), "Should return error for invalid client");
+
+        let result = server.start_counter(invalid_conn_id).await;
+        assert!(result.is_err(), "Should return error for invalid client");
+
+        let result = server.stop_counter(invalid_conn_id).await;
+        assert!(result.is_err(), "Should return error for invalid client");
+    }
+
+    #[tokio::test]
+    async fn test_multiple_clients_receive_same_timer_updates() {
+        tokio::time::pause();
+
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
+
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let (bound_handle1, mut msg_rx1) = handle.connect(timer_id).await.unwrap();
+        let (bound_handle2, mut msg_rx2) = handle.connect(timer_id).await.unwrap();
+
+        tokio::time::advance(Duration::from_millis(10)).await;
+
+        bound_handle1.set_time(3000).await.unwrap();
+        tokio::time::advance(Duration::from_millis(10)).await;
+
+        while msg_rx1.try_recv().is_ok() {}
+        while msg_rx2.try_recv().is_ok() {}
+
+        bound_handle2.start_counter().await.unwrap();
+        tokio::time::advance(Duration::from_millis(10)).await;
+
+        let msg1 = msg_rx1.try_recv();
+        let msg2 = msg_rx2.try_recv();
+
+        assert!(msg1.is_ok(), "Client 1 should receive timer update");
+        assert!(msg2.is_ok(), "Client 2 should receive timer update");
+
+        let msg1 = msg1.unwrap();
+        let msg2 = msg2.unwrap();
+
+        assert_eq!(msg1.target_time, 3000);
+        assert_eq!(msg2.target_time, 3000);
+        assert!(msg1.is_running);
+        assert!(msg2.is_running);
+        assert_eq!(msg1.client_count, 2);
+        assert_eq!(msg2.client_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_client_disconnect_reduces_count() {
+        tokio::time::pause();
+
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
+
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let (bound_handle1, mut msg_rx1) = handle.connect(timer_id).await.unwrap();
+        let (bound_handle2, mut msg_rx2) = handle.connect(timer_id).await.unwrap();
+
+        tokio::time::advance(Duration::from_millis(10)).await;
+        while msg_rx1.try_recv().is_ok() {}
+        while msg_rx2.try_recv().is_ok() {}
+
+        drop(bound_handle2);
+        drop(msg_rx2);
+
+        tokio::time::advance(Duration::from_millis(10)).await;
+
+        bound_handle1.set_time(1000).await.unwrap();
+        tokio::time::advance(Duration::from_millis(10)).await;
+
+        while let Ok(msg) = msg_rx1.try_recv() {
+            if msg.client_count == 1 {
+                return;
+            }
+        }
+
+        tokio::time::advance(Duration::from_millis(20)).await;
+        let msg = msg_rx1.try_recv().unwrap();
+        assert_eq!(msg.client_count, 1, "Client count should be 1 after disconnect");
+    }
+
+    #[tokio::test]
+    async fn test_different_timers_are_independent() {
+        tokio::time::pause();
+
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
+
+        tokio::spawn(server.run());
+
+        let timer_id1 = Uuid::new_v4();
+        let timer_id2 = Uuid::new_v4();
+
+        let (bound_handle1, mut msg_rx1) = handle.connect(timer_id1).await.unwrap();
+        let (bound_handle2, mut msg_rx2) = handle.connect(timer_id2).await.unwrap();
+
+        tokio::time::advance(Duration::from_millis(10)).await;
+
+        bound_handle1.set_time(1000).await.unwrap();
+        bound_handle2.set_time(2000).await.unwrap();
+
+        tokio::time::advance(Duration::from_millis(10)).await;
+
+        while msg_rx1.try_recv().is_ok() {}
+        while msg_rx2.try_recv().is_ok() {}
+
+        bound_handle1.start_counter().await.unwrap();
+        bound_handle2.set_time(3000).await.unwrap();
+
+        tokio::time::advance(Duration::from_millis(10)).await;
+
+        let mut timer1_msg = None;
+        let mut timer2_msg = None;
+
+        while let Ok(msg) = msg_rx1.try_recv() {
+            timer1_msg = Some(msg);
+        }
+        while let Ok(msg) = msg_rx2.try_recv() {
+            timer2_msg = Some(msg);
+        }
+
+        assert!(timer1_msg.is_some(), "Should receive timer 1 message");
+        assert!(timer2_msg.is_some(), "Should receive timer 2 message");
+
+        let timer1_msg = timer1_msg.unwrap();
+        let timer2_msg = timer2_msg.unwrap();
+
+        assert!(timer1_msg.is_running, "Timer 1 should be running");
+        assert_eq!(timer1_msg.target_time, 1000, "Timer 1 should have target time 1000");
+        assert!(!timer2_msg.is_running, "Timer 2 should not be running");
+        assert_eq!(timer2_msg.target_time, 3000, "Timer 2 should have target time 3000");
+    }
+
+    #[tokio::test]
+    async fn test_server_with_real_time() {
+        // NO tokio::time::pause() - use real time!
+        let config = Config::default(); // Use REAL config values
+
+        let (server, handle) = TimerServer::with_config(config);
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let (bound, mut rx) = handle.connect(timer_id).await.unwrap();
+
+        // Drain initial messages
+        while rx.try_recv().is_ok() {}
+
+        bound.set_time(5000).await.unwrap();
+        bound.start_counter().await.unwrap();
+
+        // Actually wait real milliseconds
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        // Get latest message
+        let mut latest_msg = None;
+        while let Ok(msg) = rx.try_recv() {
+            latest_msg = Some(msg);
+        }
+
+        let msg = latest_msg.expect("Should have received at least one message");
+        assert!(msg.is_running, "Timer should be running");
+        assert_eq!(msg.target_time, 5000);
+        // Grug expect time to be ~200-300ms (with tolerance for real-world timing)
+        assert!(
+            msg.current_time >= 200 && msg.current_time <= 350,
+            "Expected ~250ms, got {}ms",
+            msg.current_time
+        );
+    }
+
+    #[tokio::test]
+    async fn test_server_with_production_config() {
+        tokio::time::pause();
+
+        // Use REAL production config, not super-fast test config
+        let config = Config::default(); // 100ms tick, not 1ms!
+        let (server, handle) = TimerServer::with_config(config);
+
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+        let (bound, mut rx) = handle.connect(timer_id).await.unwrap();
+
+        tokio::time::advance(Duration::from_millis(150)).await;
+        tokio::task::yield_now().await; // Let timer task process
+        while rx.try_recv().is_ok() {}
+
+        bound.set_time(3000).await.unwrap();
+        tokio::time::advance(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
+
+        bound.start_counter().await.unwrap();
+        tokio::time::advance(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
+
+        // Advance by realistic amounts, giving time for multiple ticks
+        // With 100ms tick interval, we need to advance past several ticks
+        tokio::time::advance(Duration::from_millis(550)).await;
+        tokio::task::yield_now().await;
+
+        // Check timer advanced roughly 500ms
+        let mut latest_msg = None;
+        while let Ok(msg) = rx.try_recv() {
+            latest_msg = Some(msg);
+        }
+
+        let msg = latest_msg.expect("Should receive timer update");
+        assert!(msg.is_running);
+        assert!(
+            msg.current_time >= 400 && msg.current_time <= 600,
+            "Expected ~500ms, got {}ms",
+            msg.current_time
+        );
+    }
+
+    #[tokio::test]
+    async fn test_full_end_to_end_flow() {
+        tokio::time::pause();
+
+        let config = Config::default();
+        let (server, handle) = TimerServer::with_config(config);
+        tokio::spawn(server.run());
+
+        let timer_id = Uuid::new_v4();
+
+        // Two clients connect to same timer
+        let (bound1, mut rx1) = handle.connect(timer_id).await.unwrap();
+        let (bound2, mut rx2) = handle.connect(timer_id).await.unwrap();
+
+        tokio::time::advance(Duration::from_millis(100)).await;
+        while rx1.try_recv().is_ok() {}
+        while rx2.try_recv().is_ok() {}
+
+        // Client 1 sets time
+        bound1.set_time(5000).await.unwrap();
+        tokio::time::advance(Duration::from_millis(100)).await;
+
+        // Client 2 starts timer
+        bound2.start_counter().await.unwrap();
+        tokio::time::advance(Duration::from_millis(500)).await;
+
+        // Both clients should see same state
+        let mut latest_msg1 = None;
+        while let Ok(msg) = rx1.try_recv() {
+            latest_msg1 = Some(msg);
+        }
+        let mut latest_msg2 = None;
+        while let Ok(msg) = rx2.try_recv() {
+            latest_msg2 = Some(msg);
+        }
+
+        let msg1 = latest_msg1.expect("Client 1 should receive updates");
+        let msg2 = latest_msg2.expect("Client 2 should receive updates");
+
+        assert_eq!(msg1.target_time, 5000);
+        assert_eq!(msg2.target_time, 5000);
+        assert_eq!(msg1.is_running, msg2.is_running);
+        assert!(msg1.is_running, "Timer should be running");
+        // Both should see roughly the same elapsed time
+        assert!(
+            (msg1.current_time - msg2.current_time).abs() < 50,
+            "Clients should see similar current_time"
+        );
+        assert_eq!(msg1.client_count, 2);
+        assert_eq!(msg2.client_count, 2);
+
+        // Client 1 stops the timer
+        bound1.stop_counter().await.unwrap();
+        tokio::time::advance(Duration::from_millis(100)).await;
+
+        while let Ok(msg) = rx2.try_recv() {
+            latest_msg2 = Some(msg);
+        }
+        let msg2 = latest_msg2.unwrap();
+        assert!(!msg2.is_running, "Timer should be stopped");
+
+        // Disconnect one client
+        drop(bound2);
+        drop(rx2);
+        tokio::time::advance(Duration::from_millis(100)).await;
+
+        bound1.set_time(1000).await.unwrap();
+        tokio::time::advance(Duration::from_millis(100)).await;
+
+        while let Ok(msg) = rx1.try_recv() {
+            latest_msg1 = Some(msg);
+        }
+        let msg1 = latest_msg1.unwrap();
+        assert_eq!(msg1.client_count, 1, "Should only have 1 client after disconnect");
     }
 }

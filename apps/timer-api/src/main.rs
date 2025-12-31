@@ -1,7 +1,7 @@
 use actix_web::{
     middleware::Logger, web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
 };
-use timer_api::{handler, server};
+use timer_api::{config::Config, handler, server};
 use tokio::task::spawn_local;
 use uuid::Uuid;
 
@@ -18,6 +18,7 @@ async fn ws_handshake(
     stream: web::Payload,
     path: web::Path<(Uuid,)>,
     server_handle: web::Data<server::ServerHandle>,
+    config: web::Data<Config>,
 ) -> Result<HttpResponse, Error> {
     let (res, session, stream) = actix_ws::handle(&req, stream)?;
 
@@ -27,6 +28,7 @@ async fn ws_handshake(
         stream,
         (**server_handle).clone(),
         timer_id,
+        (**config).clone(),
     ));
 
     Ok(res)
@@ -51,10 +53,13 @@ async fn main() -> std::io::Result<()> {
 
     tracing::info!("Starting server on {}", bind_address);
 
+    let config = Config::default();
+
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
             .app_data(web::Data::new(handle.clone()))
+            .app_data(web::Data::new(config.clone()))
             .service(web::resource("/").to(index))
             .service(web::resource("/health").to(health))
             .service(web::resource("/ws/{id}").to(ws_handshake))
