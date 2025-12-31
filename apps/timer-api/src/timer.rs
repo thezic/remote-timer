@@ -6,8 +6,6 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, Instant};
 use uuid::Uuid;
 
-use crate::config::TimerConfig;
-
 #[derive(Debug)]
 pub enum Command {
     StartCounter,
@@ -31,7 +29,7 @@ pub struct Timer {
     target_time: i32,
     cmd_rx: mpsc::UnboundedReceiver<Command>,
     listeners: HashMap<Uuid, mpsc::UnboundedSender<TimerMessage>>,
-    config: TimerConfig,
+    tick_interval: std::time::Duration,
 }
 
 #[derive(Clone)]
@@ -66,30 +64,15 @@ impl TimerHandle {
     }
 }
 
-pub trait TimerFactory: Clone + Send + 'static {
-    fn create_timer(&self, config: TimerConfig) -> TimerHandle;
-}
-
-#[derive(Clone)]
-pub struct RealTimerFactory;
-
-impl TimerFactory for RealTimerFactory {
-    fn create_timer(&self, config: TimerConfig) -> TimerHandle {
-        let (timer, handle) = Timer::new(config);
-        tokio::spawn(timer.run());
-        handle
-    }
-}
-
 impl Timer {
-    pub fn new(config: TimerConfig) -> (Self, TimerHandle) {
+    pub fn new(tick_interval: std::time::Duration) -> (Self, TimerHandle) {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let timer = Self {
             time: 0,
             target_time: 0,
             cmd_rx,
             listeners: HashMap::new(),
-            config,
+            tick_interval,
         };
         (timer, TimerHandle { cmd_tx })
     }
@@ -99,7 +82,7 @@ impl Timer {
     }
 
     pub async fn run(mut self) {
-        let mut interval_stream = interval(self.config.tick_interval);
+        let mut interval_stream = interval(self.tick_interval);
         interval_stream.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut last_tick = Instant::now();
         let mut is_counting = false;
@@ -152,12 +135,9 @@ impl Timer {
 #[cfg(test)]
 pub mod test {
     use tokio::time::{sleep, Duration};
-    use tokio::sync::mpsc;
-    use crate::config::TimerConfig;
-    use std::sync::{Arc, Mutex};
-    use super::{TimerFactory, TimerHandle};
+    use crate::config::Config;
 
-    async fn drain_to_latest_msg(rx: &mut mpsc::UnboundedReceiver<super::TimerMessage>) -> super::TimerMessage {
+    async fn drain_to_latest_msg(rx: &mut tokio::sync::mpsc::UnboundedReceiver<super::TimerMessage>) -> super::TimerMessage {
         let mut msg = rx.recv().await.unwrap();
         while let Ok(new_msg) = rx.try_recv() {
             msg = new_msg;
@@ -167,7 +147,7 @@ pub mod test {
 
     #[tokio::test]
     async fn test_timer() {
-        let (timer, timer_handle) = super::Timer::new(TimerConfig::default());
+        let (timer, timer_handle) = super::Timer::new(Config::default().tick_interval);
 
         let client_id = uuid::Uuid::new_v4();
         let mut msg_rx = timer_handle.subscribe(client_id).unwrap();
@@ -199,8 +179,7 @@ pub mod test {
     async fn test_timer_broadcasts_state() {
         tokio::time::pause();
 
-        let config = TimerConfig::for_testing();
-        let (timer, timer_handle) = super::Timer::new(config);
+        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
 
         tokio::spawn(timer.run());
 
@@ -222,8 +201,7 @@ pub mod test {
     async fn test_timer_set_time() {
         tokio::time::pause();
 
-        let config = TimerConfig::for_testing();
-        let (timer, timer_handle) = super::Timer::new(config);
+        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
 
         tokio::spawn(timer.run());
 
@@ -249,8 +227,7 @@ pub mod test {
     async fn test_timer_start_stop() {
         tokio::time::pause();
 
-        let config = TimerConfig::for_testing();
-        let (timer, timer_handle) = super::Timer::new(config);
+        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
 
         tokio::spawn(timer.run());
 
@@ -277,8 +254,7 @@ pub mod test {
     async fn test_timer_counting_with_paused_time() {
         tokio::time::pause();
 
-        let config = TimerConfig::for_testing();
-        let (timer, timer_handle) = super::Timer::new(config);
+        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
 
         tokio::spawn(timer.run());
 
@@ -312,8 +288,7 @@ pub mod test {
     async fn test_timer_multiple_subscribers() {
         tokio::time::pause();
 
-        let config = TimerConfig::for_testing();
-        let (timer, timer_handle) = super::Timer::new(config);
+        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
 
         tokio::spawn(timer.run());
 
@@ -353,8 +328,7 @@ pub mod test {
     async fn test_timer_handles_rapid_commands() {
         tokio::time::pause();
 
-        let config = TimerConfig::for_testing();
-        let (timer, timer_handle) = super::Timer::new(config);
+        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
 
         tokio::spawn(timer.run());
 
@@ -378,8 +352,7 @@ pub mod test {
     async fn test_timer_handles_large_time_values() {
         tokio::time::pause();
 
-        let config = TimerConfig::for_testing();
-        let (timer, timer_handle) = super::Timer::new(config);
+        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
 
         tokio::spawn(timer.run());
 
@@ -404,8 +377,7 @@ pub mod test {
     async fn test_timer_closes_receiver_on_shutdown() {
         tokio::time::pause();
 
-        let config = TimerConfig::for_testing();
-        let (timer, timer_handle) = super::Timer::new(config);
+        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
 
         tokio::spawn(timer.run());
 
@@ -425,35 +397,5 @@ pub mod test {
         }
 
         assert!(received_none, "Receiver should be closed after timer shutdown");
-    }
-
-    #[derive(Clone)]
-    pub struct MockTimerFactory {
-        created_timers: Arc<Mutex<Vec<TimerHandle>>>,
-    }
-
-    impl MockTimerFactory {
-        pub fn new() -> Self {
-            Self {
-                created_timers: Arc::new(Mutex::new(Vec::new())),
-            }
-        }
-
-        pub fn created_count(&self) -> usize {
-            self.created_timers.lock().unwrap().len()
-        }
-
-        pub fn get_timer(&self, index: usize) -> Option<TimerHandle> {
-            self.created_timers.lock().unwrap().get(index).cloned()
-        }
-    }
-
-    impl TimerFactory for MockTimerFactory {
-        fn create_timer(&self, config: TimerConfig) -> TimerHandle {
-            let (timer, handle) = super::Timer::new(config);
-            self.created_timers.lock().unwrap().push(handle.clone());
-            tokio::spawn(timer.run());
-            handle
-        }
     }
 }

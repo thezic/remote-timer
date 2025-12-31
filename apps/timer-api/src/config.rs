@@ -1,144 +1,37 @@
 use std::time::Duration;
 
-/// Configuration for the timer's tick behavior.
-///
-/// The timer uses an interval-based approach where it "ticks" at regular intervals to
-/// update elapsed time. The `tick_interval` controls how often these updates occur.
-///
-/// # Examples
-///
-/// ```
-/// use std::time::Duration;
-/// use timer_api::config::TimerConfig;
-///
-/// // Production: tick every 100ms for good balance of accuracy and performance
-/// let config = TimerConfig::default();
-/// assert_eq!(config.tick_interval, Duration::from_millis(100));
-///
-/// // Testing: tick every 1ms for fast tests
-/// let test_config = TimerConfig::for_testing();
-/// assert_eq!(test_config.tick_interval, Duration::from_millis(1));
-/// ```
+/// Application configuration for timer behavior, WebSocket heartbeats, and cleanup.
 #[derive(Clone, Debug, PartialEq)]
-pub struct TimerConfig {
-    /// Interval between timer ticks. Determines how frequently the timer checks for elapsed time
-    /// and updates its state. Shorter intervals provide more granular timing but use more CPU.
-    /// For a presentation timer, 100ms (default) provides sufficient accuracy.
+pub struct Config {
+    /// How often the timer ticks to update elapsed time (default: 100ms).
     pub tick_interval: Duration,
-}
-
-impl Default for TimerConfig {
-    fn default() -> Self {
-        Self {
-            tick_interval: Duration::from_millis(100),
-        }
-    }
-}
-
-impl TimerConfig {
-    pub fn for_testing() -> Self {
-        Self {
-            // 1ms ticks for fast tests - aggressive but works on modern systems.
-            // Adjust to 5-10ms if CI flakiness occurs on slower systems.
-            tick_interval: Duration::from_millis(1),
-        }
-    }
-}
-
-/// Configuration for WebSocket connection handlers that manage client connections.
-///
-/// Handlers use a heartbeat mechanism to detect disconnected clients:
-/// - Periodically sends ping messages to clients based on `heartbeat_interval`
-/// - Tracks when pong responses are received from clients
-/// - Disconnects clients that haven't responded within `client_timeout`
-///
-/// # Examples
-///
-/// ```
-/// use std::time::Duration;
-/// use timer_api::config::HandlerConfig;
-///
-/// // Production configuration with 5-second heartbeats
-/// let config = HandlerConfig::default();
-/// assert_eq!(config.heartbeat_interval, Duration::from_secs(5));
-///
-/// // Fast configuration for testing
-/// let test_config = HandlerConfig::for_testing();
-/// assert_eq!(test_config.heartbeat_interval, Duration::from_millis(10));
-/// ```
-#[derive(Clone, Debug, PartialEq)]
-pub struct HandlerConfig {
-    /// Interval at which heartbeat ping messages are sent to connected clients.
-    /// Shorter intervals detect disconnections faster but increase network traffic.
+    /// How often to send WebSocket ping messages (default: 5s).
     pub heartbeat_interval: Duration,
-    /// Maximum duration without receiving a pong response before considering a client timed out.
-    /// Should be larger than `heartbeat_interval` to allow for network latency.
+    /// How long to wait for pong before timing out client (default: 10s).
     pub client_timeout: Duration,
-}
-
-impl Default for HandlerConfig {
-    fn default() -> Self {
-        Self {
-            heartbeat_interval: Duration::from_secs(5),
-            client_timeout: Duration::from_secs(10),
-        }
-    }
-}
-
-impl HandlerConfig {
-    pub fn for_testing() -> Self {
-        Self {
-            heartbeat_interval: Duration::from_millis(10), // Much faster for tests
-            client_timeout: Duration::from_millis(50),
-        }
-    }
-}
-
-/// Configuration for the timer server's resource management and cleanup behavior.
-///
-/// The server manages multiple timer instances identified by UUIDs. To prevent memory leaks
-/// from abandoned timers (e.g., when all clients disconnect and never reconnect), the server
-/// periodically cleans up old idle timers.
-///
-/// A timer is considered eligible for cleanup when:
-/// - It has no connected clients
-/// - It has existed for longer than `max_timer_age`
-///
-/// # Examples
-///
-/// ```
-/// use std::time::Duration;
-/// use timer_api::config::ServerConfig;
-///
-/// // Production: keep idle timers for 30 minutes
-/// let config = ServerConfig::default();
-/// assert_eq!(config.max_timer_age, Duration::from_secs(30 * 60));
-///
-/// // Testing: cleanup after 100ms for faster tests
-/// let test_config = ServerConfig::for_testing();
-/// assert_eq!(test_config.max_timer_age, Duration::from_millis(100));
-/// ```
-#[derive(Clone, Debug, PartialEq)]
-pub struct ServerConfig {
-    /// Maximum age of idle timers (those with no connected clients) before they become
-    /// eligible for cleanup. Longer durations use more memory but allow clients to reconnect
-    /// to existing timers. Shorter durations save memory but require clients to create new
-    /// timers if they reconnect after this duration.
+    /// How long to keep idle timers before cleanup (default: 30 minutes).
     pub max_timer_age: Duration,
 }
 
-impl Default for ServerConfig {
+impl Default for Config {
     fn default() -> Self {
         Self {
-            max_timer_age: Duration::from_secs(30 * 60), // 30 minutes
+            tick_interval: Duration::from_millis(100),
+            heartbeat_interval: Duration::from_secs(5),
+            client_timeout: Duration::from_secs(10),
+            max_timer_age: Duration::from_secs(30 * 60),
         }
     }
 }
 
-impl ServerConfig {
+impl Config {
+    /// Fast configuration for tests with shorter intervals.
     pub fn for_testing() -> Self {
         Self {
-            max_timer_age: Duration::from_millis(100), // Much faster cleanup for tests
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
         }
     }
 }
@@ -148,40 +41,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn timer_config_defaults() {
-        let config = TimerConfig::default();
+    fn default_config() {
+        let config = Config::default();
         assert_eq!(config.tick_interval, Duration::from_millis(100));
-    }
-
-    #[test]
-    fn timer_config_for_testing() {
-        let config = TimerConfig::for_testing();
-        assert_eq!(config.tick_interval, Duration::from_millis(1));
-    }
-
-    #[test]
-    fn handler_config_defaults() {
-        let config = HandlerConfig::default();
         assert_eq!(config.heartbeat_interval, Duration::from_secs(5));
         assert_eq!(config.client_timeout, Duration::from_secs(10));
-    }
-
-    #[test]
-    fn handler_config_for_testing() {
-        let config = HandlerConfig::for_testing();
-        assert_eq!(config.heartbeat_interval, Duration::from_millis(10));
-        assert_eq!(config.client_timeout, Duration::from_millis(50));
-    }
-
-    #[test]
-    fn server_config_defaults() {
-        let config = ServerConfig::default();
         assert_eq!(config.max_timer_age, Duration::from_secs(30 * 60));
     }
 
     #[test]
-    fn server_config_for_testing() {
-        let config = ServerConfig::for_testing();
+    fn testing_config() {
+        let config = Config::for_testing();
+        assert_eq!(config.tick_interval, Duration::from_millis(1));
+        assert_eq!(config.heartbeat_interval, Duration::from_millis(10));
+        assert_eq!(config.client_timeout, Duration::from_millis(50));
         assert_eq!(config.max_timer_age, Duration::from_millis(100));
     }
 }

@@ -6,25 +6,17 @@ use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::config::HandlerConfig;
+use crate::config::Config;
 use crate::message_handler::{handle_client_command, parse_client_message, serialize_timer_message};
 use crate::server::ServerHandle;
 
 /// WebSocket handler for timer connections.
-///
-/// This is a thin integration layer that:
-/// - Receives WebSocket messages and parses them using message_handler
-/// - Forwards timer updates to connected clients
-/// - Manages heartbeat/ping-pong for connection health
-///
-/// All business logic lives in message_handler (parsing/serialization) and
-/// server/timer (state management). This handler is intentionally simple.
 pub async fn handler(
     mut session: Session,
     stream: MessageStream,
     server_handle: ServerHandle,
     timer_id: Uuid,
-    config: HandlerConfig,
+    config: Config,
 ) {
     info!("connected");
 
