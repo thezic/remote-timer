@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use actix_ws::{MessageStream, Session};
+use actix_ws::{AggregatedMessage, MessageStream, Session};
 use futures_util::StreamExt;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
@@ -9,6 +9,19 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::message_handler::{handle_client_command, parse_client_message, serialize_timer_message};
 use crate::server::ServerHandle;
+
+/// Determines if a message from the client should reset the heartbeat timer.
+/// Any client activity (Text, Binary, Ping, Pong) indicates the client is alive.
+/// Close messages do NOT reset the timer since the client is disconnecting.
+fn should_reset_heartbeat(msg: &AggregatedMessage) -> bool {
+    matches!(
+        msg,
+        AggregatedMessage::Text(_)
+            | AggregatedMessage::Binary(_)
+            | AggregatedMessage::Ping(_)
+            | AggregatedMessage::Pong(_)
+    )
+}
 
 /// WebSocket handler for timer connections.
 pub async fn handler(
@@ -48,34 +61,43 @@ pub async fn handler(
             msg = stream.next() => {
                 debug!("received message: {msg:?}");
                 match msg {
-                    Some(Ok(actix_ws::AggregatedMessage::Text(text))) => {
-                        match parse_client_message(&text) {
-                            Ok(cmd) => {
-                                if let Err(err) = handle_client_command(cmd, &bound_handle).await {
-                                    error!("Error handling command: {err}");
+                    Some(Ok(ref aggregated_msg)) => {
+                        // Reset heartbeat timer for any client activity
+                        if should_reset_heartbeat(aggregated_msg) {
+                            last_heartbeat = Instant::now();
+                        }
+
+                        match aggregated_msg {
+                            AggregatedMessage::Text(text) => {
+                                match parse_client_message(text) {
+                                    Ok(cmd) => {
+                                        if let Err(err) = handle_client_command(cmd, &bound_handle).await {
+                                            error!("Error handling command: {err}");
+                                        }
+                                    }
+                                    Err(err) => {
+                                        error!("Failed to parse message: {err}");
+                                    }
                                 }
                             }
-                            Err(err) => {
-                                error!("Failed to parse message: {err}");
+                            AggregatedMessage::Binary(_) => {
+                                warn!("Received unexpected binary message");
+                            }
+                            AggregatedMessage::Ping(bytes) => {
+                                if session.pong(bytes).await.is_err() {
+                                    break Some(actix_ws::CloseReason {
+                                        code: actix_ws::CloseCode::Abnormal,
+                                        description: Some("Pong failed".to_string()),
+                                    });
+                                }
+                            }
+                            AggregatedMessage::Pong(_) => {
+                                // Heartbeat already reset above
+                            }
+                            AggregatedMessage::Close(reason) => {
+                                break reason.clone();
                             }
                         }
-                    }
-                    Some(Ok(actix_ws::AggregatedMessage::Binary(_))) => {
-                        warn!("Received unexpected binary message");
-                    }
-                    Some(Ok(actix_ws::AggregatedMessage::Ping(bytes))) => {
-                        if session.pong(&bytes).await.is_err() {
-                            break Some(actix_ws::CloseReason {
-                                code: actix_ws::CloseCode::Abnormal,
-                                description: Some("Pong failed".to_string()),
-                            });
-                        }
-                    }
-                    Some(Ok(actix_ws::AggregatedMessage::Pong(_))) => {
-                        last_heartbeat = Instant::now();
-                    }
-                    Some(Ok(actix_ws::AggregatedMessage::Close(reason))) => {
-                        break reason;
                     }
                     Some(Err(err)) => {
                         error!("WebSocket error: {err}");
