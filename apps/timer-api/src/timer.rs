@@ -135,7 +135,6 @@ impl Timer {
 #[cfg(test)]
 pub mod test {
     use tokio::time::{sleep, Duration};
-    use crate::config::Config;
 
     async fn drain_to_latest_msg(rx: &mut tokio::sync::mpsc::UnboundedReceiver<super::TimerMessage>) -> super::TimerMessage {
         let mut msg = rx.recv().await.unwrap();
@@ -397,5 +396,85 @@ pub mod test {
         }
 
         assert!(received_none, "Receiver should be closed after timer shutdown");
+    }
+
+    #[tokio::test]
+    async fn test_timer_with_real_time() {
+        // NO tokio::time::pause() - use real time!
+        let (timer, timer_handle) = super::Timer::new(Duration::from_millis(100));
+
+        tokio::spawn(timer.run());
+
+        let client_id = uuid::Uuid::new_v4();
+        let mut msg_rx = timer_handle.subscribe(client_id).unwrap();
+
+        // Drain initial messages
+        while msg_rx.try_recv().is_ok() {}
+
+        timer_handle.set_time(3000).unwrap();
+        timer_handle.start_counter().unwrap();
+
+        // Actually wait real milliseconds
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        // Get latest message
+        let mut latest_msg = None;
+        while let Ok(msg) = msg_rx.try_recv() {
+            latest_msg = Some(msg);
+        }
+
+        let msg = latest_msg.expect("Should have received at least one message");
+        assert!(msg.is_running, "Timer should be running");
+        assert_eq!(msg.target_time, 3000);
+        // Real time should advance roughly 250ms (with tolerance)
+        assert!(
+            msg.current_time >= 200 && msg.current_time <= 350,
+            "Expected ~250ms, got {}ms",
+            msg.current_time
+        );
+
+        timer_handle.close().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_timer_with_production_tick_interval() {
+        tokio::time::pause();
+
+        // Use production-like 100ms tick interval
+        let (timer, timer_handle) = super::Timer::new(Duration::from_millis(100));
+
+        tokio::spawn(timer.run());
+
+        let client_id = uuid::Uuid::new_v4();
+        let mut msg_rx = timer_handle.subscribe(client_id).unwrap();
+
+        tokio::time::advance(Duration::from_millis(150)).await;
+        tokio::task::yield_now().await; // Let timer task process
+        drain_to_latest_msg(&mut msg_rx).await;
+
+        timer_handle.set_time(5000).unwrap();
+        tokio::time::advance(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
+
+        timer_handle.start_counter().unwrap();
+        tokio::time::advance(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
+
+        // Advance by realistic amount, giving time for multiple ticks
+        // With 100ms tick interval, need to advance past several ticks
+        tokio::time::advance(Duration::from_millis(750)).await;
+        tokio::task::yield_now().await;
+
+        let msg = drain_to_latest_msg(&mut msg_rx).await;
+        assert!(msg.is_running);
+        assert_eq!(msg.target_time, 5000);
+        // Should advance roughly 750-800ms
+        assert!(
+            msg.current_time >= 700 && msg.current_time <= 850,
+            "Expected ~750ms, got {}ms",
+            msg.current_time
+        );
+
+        timer_handle.close().unwrap();
     }
 }
