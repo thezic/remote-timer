@@ -336,10 +336,11 @@ impl<F: TimerFactory> TimerServer<F> {
 mod tests {
     use super::*;
     use crate::timer::test::MockTimerFactory;
-    use tokio::time::sleep;
 
     #[tokio::test]
     async fn test_server_creates_timer_on_first_connection() {
+        tokio::time::pause();
+
         let factory = MockTimerFactory::new();
         let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
 
@@ -349,12 +350,14 @@ mod tests {
         let result = handle.connect(timer_id).await;
         assert!(result.is_ok());
 
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
         assert_eq!(factory.created_count(), 1, "Should create one timer on first connection");
     }
 
     #[tokio::test]
     async fn test_server_reuses_timer_for_same_id() {
+        tokio::time::pause();
+
         let factory = MockTimerFactory::new();
         let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
 
@@ -362,16 +365,18 @@ mod tests {
 
         let timer_id = Uuid::new_v4();
         let _conn1 = handle.connect(timer_id).await.unwrap();
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         let _conn2 = handle.connect(timer_id).await.unwrap();
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         assert_eq!(factory.created_count(), 1, "Should reuse existing timer for same timer_id");
     }
 
     #[tokio::test]
     async fn test_server_creates_different_timers_for_different_ids() {
+        tokio::time::pause();
+
         let factory = MockTimerFactory::new();
         let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
 
@@ -381,16 +386,18 @@ mod tests {
         let timer_id2 = Uuid::new_v4();
 
         let _conn1 = handle.connect(timer_id1).await.unwrap();
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         let _conn2 = handle.connect(timer_id2).await.unwrap();
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         assert_eq!(factory.created_count(), 2, "Should create separate timers for different timer_ids");
     }
 
     #[tokio::test]
     async fn test_bound_handle_sends_commands() {
+        tokio::time::pause();
+
         let factory = MockTimerFactory::new();
         let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
 
@@ -399,16 +406,16 @@ mod tests {
         let timer_id = Uuid::new_v4();
         let (bound_handle, mut msg_rx) = handle.connect(timer_id).await.unwrap();
 
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         bound_handle.set_time(5000).await.unwrap();
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         bound_handle.start_counter().await.unwrap();
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         bound_handle.stop_counter().await.unwrap();
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         while let Ok(_) = msg_rx.try_recv() {}
     }
@@ -426,6 +433,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_single_iteration_processes_connect() {
+        tokio::time::pause();
+
         let factory = MockTimerFactory::new();
         let (mut server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
 
@@ -434,7 +443,7 @@ mod tests {
             handle.connect(timer_id).await.unwrap();
         });
 
-        sleep(Duration::from_millis(5)).await;
+        tokio::time::advance(Duration::from_millis(5)).await;
         let continues = server.run_single_iteration().await;
         assert!(continues, "Server should continue after processing connect");
         assert_eq!(factory.created_count(), 1, "Should have created one timer");
@@ -459,6 +468,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_clients_receive_same_timer_updates() {
+        tokio::time::pause();
+
         let factory = MockTimerFactory::new();
         let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
 
@@ -468,16 +479,16 @@ mod tests {
         let (bound_handle1, mut msg_rx1) = handle.connect(timer_id).await.unwrap();
         let (bound_handle2, mut msg_rx2) = handle.connect(timer_id).await.unwrap();
 
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         bound_handle1.set_time(3000).await.unwrap();
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         while msg_rx1.try_recv().is_ok() {}
         while msg_rx2.try_recv().is_ok() {}
 
         bound_handle2.start_counter().await.unwrap();
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         let msg1 = msg_rx1.try_recv();
         let msg2 = msg_rx2.try_recv();
@@ -498,6 +509,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_disconnect_reduces_count() {
+        tokio::time::pause();
+
         let factory = MockTimerFactory::new();
         let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
 
@@ -507,17 +520,17 @@ mod tests {
         let (bound_handle1, mut msg_rx1) = handle.connect(timer_id).await.unwrap();
         let (bound_handle2, mut msg_rx2) = handle.connect(timer_id).await.unwrap();
 
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
         while msg_rx1.try_recv().is_ok() {}
         while msg_rx2.try_recv().is_ok() {}
 
         drop(bound_handle2);
         drop(msg_rx2);
 
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         bound_handle1.set_time(1000).await.unwrap();
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         while let Ok(msg) = msg_rx1.try_recv() {
             if msg.client_count == 1 {
@@ -525,13 +538,15 @@ mod tests {
             }
         }
 
-        sleep(Duration::from_millis(20)).await;
+        tokio::time::advance(Duration::from_millis(20)).await;
         let msg = msg_rx1.try_recv().unwrap();
         assert_eq!(msg.client_count, 1, "Client count should be 1 after disconnect");
     }
 
     #[tokio::test]
     async fn test_different_timers_are_independent() {
+        tokio::time::pause();
+
         let factory = MockTimerFactory::new();
         let (server, handle) = TimerServer::with_factory(factory.clone(), TimerConfig::for_testing());
 
@@ -543,12 +558,12 @@ mod tests {
         let (bound_handle1, mut msg_rx1) = handle.connect(timer_id1).await.unwrap();
         let (bound_handle2, mut msg_rx2) = handle.connect(timer_id2).await.unwrap();
 
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         bound_handle1.set_time(1000).await.unwrap();
         bound_handle2.set_time(2000).await.unwrap();
 
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         while msg_rx1.try_recv().is_ok() {}
         while msg_rx2.try_recv().is_ok() {}
@@ -556,7 +571,7 @@ mod tests {
         bound_handle1.start_counter().await.unwrap();
         bound_handle2.set_time(3000).await.unwrap();
 
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::advance(Duration::from_millis(10)).await;
 
         let mut timer1_msg = None;
         let mut timer2_msg = None;
