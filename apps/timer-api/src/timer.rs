@@ -147,7 +147,7 @@ pub mod test {
 
     #[tokio::test]
     async fn test_timer() {
-        let (timer, timer_handle) = super::Timer::new(Config::default().tick_interval);
+        let (timer, timer_handle) = super::Timer::new(Duration::from_millis(100));
 
         let client_id = uuid::Uuid::new_v4();
         let mut msg_rx = timer_handle.subscribe(client_id).unwrap();
@@ -179,7 +179,7 @@ pub mod test {
     async fn test_timer_broadcasts_state() {
         tokio::time::pause();
 
-        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
+        let (timer, timer_handle) = super::Timer::new(Duration::from_millis(1));
 
         tokio::spawn(timer.run());
 
@@ -201,7 +201,7 @@ pub mod test {
     async fn test_timer_set_time() {
         tokio::time::pause();
 
-        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
+        let (timer, timer_handle) = super::Timer::new(Duration::from_millis(1));
 
         tokio::spawn(timer.run());
 
@@ -227,7 +227,7 @@ pub mod test {
     async fn test_timer_start_stop() {
         tokio::time::pause();
 
-        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
+        let (timer, timer_handle) = super::Timer::new(Duration::from_millis(1));
 
         tokio::spawn(timer.run());
 
@@ -254,7 +254,7 @@ pub mod test {
     async fn test_timer_counting_with_paused_time() {
         tokio::time::pause();
 
-        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
+        let (timer, timer_handle) = super::Timer::new(Duration::from_millis(1));
 
         tokio::spawn(timer.run());
 
@@ -288,7 +288,7 @@ pub mod test {
     async fn test_timer_multiple_subscribers() {
         tokio::time::pause();
 
-        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
+        let (timer, timer_handle) = super::Timer::new(Duration::from_millis(1));
 
         tokio::spawn(timer.run());
 
@@ -328,7 +328,7 @@ pub mod test {
     async fn test_timer_handles_rapid_commands() {
         tokio::time::pause();
 
-        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
+        let (timer, timer_handle) = super::Timer::new(Duration::from_millis(1));
 
         tokio::spawn(timer.run());
 
@@ -352,7 +352,7 @@ pub mod test {
     async fn test_timer_handles_large_time_values() {
         tokio::time::pause();
 
-        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
+        let (timer, timer_handle) = super::Timer::new(Duration::from_millis(1));
 
         tokio::spawn(timer.run());
 
@@ -377,7 +377,7 @@ pub mod test {
     async fn test_timer_closes_receiver_on_shutdown() {
         tokio::time::pause();
 
-        let (timer, timer_handle) = super::Timer::new(Config::for_testing().tick_interval);
+        let (timer, timer_handle) = super::Timer::new(Duration::from_millis(1));
 
         tokio::spawn(timer.run());
 

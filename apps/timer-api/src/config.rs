@@ -24,18 +24,6 @@ impl Default for Config {
     }
 }
 
-impl Config {
-    /// Fast configuration for tests with shorter intervals.
-    pub fn for_testing() -> Self {
-        Self {
-            tick_interval: Duration::from_millis(1),
-            heartbeat_interval: Duration::from_millis(10),
-            client_timeout: Duration::from_millis(50),
-            max_timer_age: Duration::from_millis(100),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -47,14 +35,5 @@ mod tests {
         assert_eq!(config.heartbeat_interval, Duration::from_secs(5));
         assert_eq!(config.client_timeout, Duration::from_secs(10));
         assert_eq!(config.max_timer_age, Duration::from_secs(30 * 60));
-    }
-
-    #[test]
-    fn testing_config() {
-        let config = Config::for_testing();
-        assert_eq!(config.tick_interval, Duration::from_millis(1));
-        assert_eq!(config.heartbeat_interval, Duration::from_millis(10));
-        assert_eq!(config.client_timeout, Duration::from_millis(50));
-        assert_eq!(config.max_timer_age, Duration::from_millis(100));
     }
 }

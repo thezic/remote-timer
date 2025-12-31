@@ -337,7 +337,13 @@ mod tests {
     async fn test_server_creates_timer_on_first_connection() {
         tokio::time::pause();
 
-        let (server, handle) = TimerServer::with_config(Config::for_testing());
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
 
         tokio::spawn(server.run());
 
@@ -350,7 +356,13 @@ mod tests {
     async fn test_server_reuses_timer_for_same_id() {
         tokio::time::pause();
 
-        let (server, handle) = TimerServer::with_config(Config::for_testing());
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
 
         tokio::spawn(server.run());
 
@@ -366,7 +378,13 @@ mod tests {
     async fn test_server_creates_different_timers_for_different_ids() {
         tokio::time::pause();
 
-        let (server, handle) = TimerServer::with_config(Config::for_testing());
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
 
         tokio::spawn(server.run());
 
@@ -384,7 +402,13 @@ mod tests {
     async fn test_bound_handle_sends_commands() {
         tokio::time::pause();
 
-        let (server, handle) = TimerServer::with_config(Config::for_testing());
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
 
         tokio::spawn(server.run());
 
@@ -407,7 +431,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_shutdown() {
-        let (mut server, handle) = TimerServer::with_config(Config::for_testing());
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (mut server, handle) = TimerServer::with_config(config);
 
         handle.shutdown().unwrap();
 
@@ -419,7 +449,13 @@ mod tests {
     async fn test_server_single_iteration_processes_connect() {
         tokio::time::pause();
 
-        let (mut server, handle) = TimerServer::with_config(Config::for_testing());
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (mut server, handle) = TimerServer::with_config(config);
 
         let timer_id = Uuid::new_v4();
         tokio::spawn(async move {
@@ -433,7 +469,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_handles_error_for_invalid_client() {
-        let (mut server, _handle) = TimerServer::with_config(Config::for_testing());
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (mut server, _handle) = TimerServer::with_config(config);
 
         let invalid_conn_id = Uuid::new_v4();
 
@@ -451,7 +493,13 @@ mod tests {
     async fn test_multiple_clients_receive_same_timer_updates() {
         tokio::time::pause();
 
-        let (server, handle) = TimerServer::with_config(Config::for_testing());
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
 
         tokio::spawn(server.run());
 
@@ -491,7 +539,13 @@ mod tests {
     async fn test_client_disconnect_reduces_count() {
         tokio::time::pause();
 
-        let (server, handle) = TimerServer::with_config(Config::for_testing());
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
 
         tokio::spawn(server.run());
 
@@ -526,7 +580,13 @@ mod tests {
     async fn test_different_timers_are_independent() {
         tokio::time::pause();
 
-        let (server, handle) = TimerServer::with_config(Config::for_testing());
+        let config = Config {
+            tick_interval: Duration::from_millis(1),
+            heartbeat_interval: Duration::from_millis(10),
+            client_timeout: Duration::from_millis(50),
+            max_timer_age: Duration::from_millis(100),
+        };
+        let (server, handle) = TimerServer::with_config(config);
 
         tokio::spawn(server.run());
 
